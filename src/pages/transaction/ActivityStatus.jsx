@@ -1,5 +1,22 @@
 import { useEffect, useState } from "react";
 
+// ✅ Logger
+const logInfo = (msg, data) => console.log(`📡 ${msg}`, data || "");
+const logSuccess = (msg, data) => console.log(`✅ ${msg}`, data || "");
+const logError = (msg, data) => console.error(`❌ ${msg}`, data || "");
+const logWarn = (msg, data) => console.warn(`⚠️ ${msg}`, data || "");
+
+const authHeaders = () => {
+  logInfo("Generating auth headers");  
+  return {
+    "Content-Type": "application/json",
+    "x-user-id": localStorage.getItem("userId") || "",
+    "x-user-role": localStorage.getItem("role") || "",
+    "x-user-branch": localStorage.getItem("branchName") || "",
+    "x-user-cluster": localStorage.getItem("clusterName") || ""
+  };
+};
+
 const ActivityStatus = () => {
   const [clusters, setClusters] = useState([]);
   const [branches, setBranches] = useState([]);
@@ -32,6 +49,14 @@ const ActivityStatus = () => {
  const [selectedActionType, setSelectedActionType] = useState("");
 const [showReactivateModal, setShowReactivateModal] = useState(false);
 
+const role = localStorage.getItem("role");
+const userBranch = localStorage.getItem("branchName");
+const userCluster = localStorage.getItem("clusterName");
+
+const isBranchManager = role === "Branch Manager";
+const isRegionalManager = role?.startsWith("Regional Manager");
+const isAdmin = role === "Admin";
+
  const [showPrintModal, setShowPrintModal] = useState(false);
 const [fileName, setFileName] = useState("Activity_Report");
 
@@ -55,58 +80,80 @@ const [selectedColumns, setSelectedColumns] =
 
 
  const handleReset = () => {
-  // Clear filters
+  logInfo("Reset button clicked");
+
+  if (isBranchManager) {
+    setSelectedCluster(userCluster);
+    setSelectedBranch(userBranch);
+  } 
+  else if (isRegionalManager) {
+    setSelectedCluster(userCluster);
+    setSelectedBranch("");
+  } 
+  else {
+    setSelectedCluster("");
+    setSelectedBranch("");
+  }
+
+  // 🔹 Clear all filters
   setMobileNumber("");
   setPincode("");
   setLoanAccount("");
   setMemberName("");
-
-  setSelectedCluster("");
-  setSelectedBranch("");
   setSelectedProduct("");
   setSelectedAssignedTo("");
-
-  // Clear dependent data
-  setBranches([]);
-  setAssignedUsers([]);
   setQueue("");
   setDpdQueue("");
 
-
-  // Reset table
-  setRows([]);
+  // 🔥 IMPORTANT FIXES (YOU MISSED THESE)
+  setRows([]);                // ✅ clears table data
+  setSelectedRows([]);        // ✅ clears checkboxes
+  setCurrentPage(1);          // ✅ reset pagination
   setTotalRecords(0);
   setHasSearched(false);
-  setLoading(false);
   setSelectedActionType("");
+
+  logSuccess("Filters reset completed");
 };
 
  const openDetailsModal = async (row) => {
-  if (!row.loanAccountNumber) return;
+  logInfo("Opening details modal", row);   // ✅ ADD HERE
+
+  logInfo("Calling Activity Details API", row.loanAccountNumber);
+  if (!row.loanAccountNumber) {
+  logWarn("No loan account number found");
+  return;
+}
+  
 
   setShowDetailsModal(true);
   setDetailsLoading(true);
   setActivityDetails([]);
 
   try {
+    
     const res = await fetch(
-      "http://40.80.79.26:5001/api/activity-details",
+      "https://mobile.coastal.bank.in:5001/api/npa-activity-details",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
           loanAccountNumber: row.loanAccountNumber
         })
       }
     );
 
-    if (!res.ok) throw new Error("API error");
+    if (!res.ok) {
+  logError("Activity Details API failed", res.status);
+  throw new Error("API error");
+}
 
     const data = await res.json();
+    logSuccess("Activity details received", data);
     setActivityDetails(Array.isArray(data) ? data : []);
 
   } catch (err) {
-    console.error("Activity details error", err);
+    logError("Activity details error", err);
     setActivityDetails([]);
   } finally {
     setDetailsLoading(false);
@@ -115,38 +162,64 @@ const [selectedColumns, setSelectedColumns] =
 
  const handleSearch = async () => {
 
+  const startTime = Date.now();
+logInfo("Search triggered");
+
   const hasAnyFilter = [
-    mobileNumber,
-    pincode,
-    loanAccount,
-    memberName,
-    selectedCluster,
-    selectedBranch,
-    selectedProduct,
-    selectedAssignedTo,
-    queue,
-    dpdQueue
-  ].some(value => value && String(value).trim() !== "");
+  mobileNumber,
+  pincode,
+  loanAccount,
+  memberName,
+  selectedCluster,
+  selectedBranch,
+  selectedProduct,
+  selectedAssignedTo,
+  queue,
+  dpdQueue
+].some(value => value && String(value).trim() !== "");
 
-  if (!hasAnyFilter && !selectedActionType) {
-    alert("Please select at least one filter or action before searching");
-    return;
-  }
+logInfo("Validating filters");
 
-  setLoading(true);
-  setHasSearched(true);
+logInfo("Search filters", {
+  mobileNumber,
+  pincode,
+  loanAccount,
+  memberName,
+  selectedCluster,
+  selectedBranch,
+  selectedProduct,
+  selectedAssignedTo,
+  queue,
+  dpdQueue,
+  actionType: selectedActionType
+});
+// ❗ STRICT RULE: Filter is mandatory
+if (!hasAnyFilter) {
+  logWarn("Search blocked - no filters selected");
+  alert("Please select at least one filter before searching");
+  return;
+}
+
+  setRows([]);              // ✅ clear old data BEFORE loading
+setLoading(true);
+setHasSearched(true);
   setCurrentPage(1);
 
   try {
 
     // 🔵 IF action button selected → call action API
     if (selectedActionType) {
+      logInfo("Calling Action API", {
+  actionType: selectedActionType,
+  mobileNumber,
+  branch: selectedBranch
+});
 
       const res = await fetch(
-        "http://40.80.79.26:5001/api/activity-status/action",
+        "https://mobile.coastal.bank.in:5001/api/activity-status/action",
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders(),
           body: JSON.stringify({
             actionType: selectedActionType,
             mobileNumber,
@@ -163,7 +236,13 @@ const [selectedColumns, setSelectedColumns] =
         }
       );
 
+      if (!res.ok) {
+  logError("Action API failed", res.status);
+  throw new Error("API failed");
+}
+
       const data = await res.json();
+      logSuccess("Action API response received", data);
 
       setRows(Array.isArray(data) ? data : []);
       setTotalRecords(Array.isArray(data) ? data.length : 0);
@@ -171,12 +250,17 @@ const [selectedColumns, setSelectedColumns] =
 
     // 🔵 ELSE → normal search
     else {
+      logInfo("Calling Search API", {
+  mobileNumber,
+  branch: selectedBranch,
+  product: selectedProduct
+});
 
       const res = await fetch(
-        "http://40.80.79.26:5001/api/activity-status/search",
+        "https://mobile.coastal.bank.in:5001/api/activity-status/search",
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders(),
           body: JSON.stringify({
             mobileNumber,
             pincode,
@@ -192,7 +276,13 @@ const [selectedColumns, setSelectedColumns] =
         }
       );
 
+      if (!res.ok) {
+  logError("Search API failed", res.status);
+  throw new Error("API failed");
+}
+
       const data = await res.json();
+      logSuccess("Search API response received", data);
 
       const assignedOnly = Array.isArray(data)
         ? data.filter(r => r.assignedTo && r.assignedTo.trim() !== "")
@@ -200,65 +290,115 @@ const [selectedColumns, setSelectedColumns] =
 
       setRows(assignedOnly);
       setTotalRecords(assignedOnly.length);
+      logInfo("Filtered assigned records", assignedOnly.length);
     }
 
   } catch (err) {
-    console.error("Search error", err);
+    logError("Search error", err);
   } finally {
+    logInfo("Search execution time (ms)", Date.now() - startTime);
+logSuccess("Search completed");
     setLoading(false);
   }
 };
 
   useEffect(() => {
-  fetch("http://40.80.79.26:5001/api/assignUsers", {
+
+    logInfo("Fetching assigned users", {
+  cluster: selectedCluster,
+  branch: selectedBranch
+});
+
+  fetch("https://mobile.coastal.bank.in:5001/api/assignUsers/v2", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(),
     body: JSON.stringify({
-      cluster: selectedCluster || "",
-      branchName: selectedBranch || ""
+      cluster: isRegionalManager ? userCluster : selectedCluster || "",
+      branchName: isBranchManager ? userBranch : selectedBranch || ""
     })
   })
-    .then(res => res.json())
-    .then(data => setAssignedUsers(data))
-    .catch(err => console.error("Assigned users fetch error", err));
-
-}, [selectedCluster, selectedBranch]);
+    .then(res => {
+      if (!res.ok) throw new Error("Unauthorized");
+      return res.json();
+    })
+    .then(data => {
+      logSuccess("Assigned users fetched", data);
+      setAssignedUsers(Array.isArray(data) ? data : []);
+    })
+    .catch(err => {
+      logError("Assigned users fetch error", err);
+      setAssignedUsers([]);
+    });
+}, [selectedCluster, selectedBranch, isRegionalManager, isBranchManager, userCluster, userBranch]);
 
 
   useEffect(() => {
-  fetch("http://40.80.79.26:5001/api/products")
+    logInfo("Fetching products");
+  fetch("https://mobile.coastal.bank.in:5001/api/products")
     .then(res => res.json())
-    .then(data => setProducts(data))
-    .catch(err => console.error("Product fetch error", err));
+    .then(data => {
+  logSuccess("Products fetched", data);
+  setProducts(data);
+})
+    .catch(err => logError("Product fetch error", err));
 }, []);
 
 
   useEffect(() => {
-  fetch("http://40.80.79.26:5001/api/clusters")
+    logInfo("Fetching clusters");
+  fetch("https://mobile.coastal.bank.in:5001/api/clusters")
     .then(res => res.json())
-    .then(data => setClusters(data))
-    .catch(err => console.error("Cluster fetch error", err));
+    .then(data => {
+  logSuccess("Clusters fetched", data);
+  setClusters(data);
+})
+    .catch(err => logError("Cluster fetch error", err));
 }, []);
 
 useEffect(() => {
-  let url = "http://40.80.79.26:5001/api/branches";
 
-  if (selectedCluster) {
+  let clusterToUse = selectedCluster;
+
+  // 🔒 Regional Manager should always use their own cluster
+  if (isRegionalManager) {
+    clusterToUse = userCluster;
+  }
+
+  let url = "https://mobile.coastal.bank.in:5001/api/branches";
+
+  if (clusterToUse) {
     url =
-      selectedCluster === "Corporate Office"
-        ? "http://40.80.79.26:5001/api/branches"
-        : `http://40.80.79.26:5001/api/branches/${encodeURIComponent(selectedCluster)}`;
+      clusterToUse === "Corporate Office"
+        ? "https://mobile.coastal.bank.in:5001/api/branches"
+        : `https://mobile.coastal.bank.in:5001/api/branches/${encodeURIComponent(clusterToUse)}`;
   }
 
   setLoadingBranches(true);
 
+  logInfo("Fetching branches", url);
   fetch(url)
     .then(res => res.json())
-    .then(data => setBranches(data))
-    .catch(err => console.error("Branch fetch error", err))
+    .then(data => {
+  logSuccess("Branches fetched", data);
+  setBranches(data);
+})
+    .catch(err => logError("Branch fetch error", err))
     .finally(() => setLoadingBranches(false));
 
-}, [selectedCluster]);
+}, [selectedCluster, isRegionalManager, userCluster]);
+
+useEffect(() => {
+
+  if (isBranchManager) {
+    setSelectedCluster(userCluster);
+    setSelectedBranch(userBranch);
+  }
+
+  if (isRegionalManager) {
+    setSelectedCluster(userCluster);
+  }
+
+}, [isBranchManager, isRegionalManager, userCluster, userBranch]);
 
 const totalPages = Math.max(
   1,
@@ -271,7 +411,11 @@ const indexOfFirstRecord = indexOfLastRecord - ROWS_PER_PAGE;
 const safeRows = Array.isArray(rows) ? rows : [];
 const paginatedRows = safeRows.slice(indexOfFirstRecord, indexOfLastRecord);
 
+const firstRecord = rows.length === 0 ? 0 : indexOfFirstRecord + 1;
+const lastRecord = Math.min(indexOfLastRecord, rows.length);
+
 const handleDownloadPDF = async () => {
+  logInfo("PDF download triggered", selectedRows);
 
   if (selectedRows.length === 0) {
     alert("Select records to generate PDF");
@@ -279,11 +423,16 @@ const handleDownloadPDF = async () => {
   }
 
   try {
+    logInfo("Calling PDF API", {
+  selectedRows,
+  selectedColumns,
+  fileName
+});
     const response = await fetch(
-      "http://40.80.79.26:5001/api/activity-status/export-pdf",
+      "https://mobile.coastal.bank.in:5001/api/activity-status/export-pdf",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
           selectedIds: selectedRows,
           columns: selectedColumns,
@@ -293,9 +442,10 @@ const handleDownloadPDF = async () => {
     );
 
     if (!response.ok) {
-      alert("Failed to generate PDF");
-      return;
-    }
+  logError("PDF generation failed", response.status);
+  alert("Failed to generate PDF");
+  return;
+}
 
     const blob = await response.blob();
     const url = window.URL.createObjectURL(blob);
@@ -306,61 +456,20 @@ const handleDownloadPDF = async () => {
     a.click();
 
     window.URL.revokeObjectURL(url);
+    logSuccess("PDF generated successfully");
     setShowPrintModal(false);
 
   } catch (err) {
-    console.error("PDF error:", err);
+    logError("PDF error", err);
   }
 };
 
-
-// =============================
-// HANDLE ACTION BUTTONS
-// =============================
-const handleAction = async (type) => {
-
-  setLoading(true);
-  setHasSearched(true);
-  setCurrentPage(1);
-
-  try {
-    const res = await fetch(
-      "http://40.80.79.26:5001/api/activity-status/action",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-  actionType: type,
-  mobileNumber,
-  pincode,
-  branchName: selectedBranch,
-  product: selectedProduct,
-  assignedTo: selectedAssignedTo,
-  loanAccount,
-  memberName,
-  cluster: selectedCluster,
-  queue,
-  dpdQueue
-})
-      }
-    );
-
-    const data = await res.json();
-
-    setRows(Array.isArray(data) ? data : []);
-    setTotalRecords(Array.isArray(data) ? data.length : 0);
-
-  } catch (err) {
-    console.error("Action error:", err);
-  } finally {
-    setLoading(false);
-  }
-};
 
 // =============================
 // HANDLE REACTIVATE
 // =============================
 const handleReactivate = async () => {
+  logInfo("Reactivate triggered", selectedRows);
 
   if (selectedRows.length === 0) {
     alert("Select accounts to Reactivate");
@@ -368,11 +477,12 @@ const handleReactivate = async () => {
   }
 
   try {
+    logInfo("Calling Reactivate API");
     const res = await fetch(
-      "http://40.80.79.26:5001/api/activity-status/action",
+      "https://mobile.coastal.bank.in:5001/api/activity-status/action",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
           actionType: "reactivate",
           selectedIds: selectedRows
@@ -380,18 +490,20 @@ const handleReactivate = async () => {
       }
     );
 
+    if (!res.ok) {
+  logError("Reactivate API failed", res.status);
+  throw new Error("API failed");
+}
+
     const data = await res.json();
+    logSuccess("Reactivate success", data);
     alert(data.message);
 
     setSelectedRows([]);
-    if (selectedActionType) {
-  handleAction(selectedActionType);
-} else {
-  handleSearch();
-}
+    handleSearch(); // ✅ Always go through Search
 
   } catch (err) {
-    console.error("Reactivate error:", err);
+    logError("Reactivate error", err);
   }
 };
 
@@ -414,8 +526,10 @@ const selectedUserName =
   label="Cluster"
   value={selectedCluster}
   onChange={(e) => {
-  setSelectedCluster(e.target.value);
-}}
+    if (isBranchManager) return;
+    setSelectedCluster(e.target.value);
+  }}
+  disabled={isBranchManager || isRegionalManager}
 >
   <option value="">Select</option>
   <option value="Corporate Office">Corporate Office</option>
@@ -430,7 +544,11 @@ const selectedUserName =
        <Select
   label="Branch Name"
   value={selectedBranch}
-  onChange={(e) => setSelectedBranch(e.target.value)}
+  onChange={(e) => {
+    if (isBranchManager) return;
+    setSelectedBranch(e.target.value);
+  }}
+  disabled={isBranchManager}
 >
 
   <option value="">
@@ -552,9 +670,10 @@ const selectedUserName =
 
         <button
   onClick={() => {
-    setSelectedActionType("past");
-    handleAction("past");
-  }}
+  setSelectedActionType("past");
+  setRows([]);            // ✅ clear old data
+  setHasSearched(false);  // ✅ reset UI
+}}
   className={`px-4 py-2 rounded ${
     selectedActionType === "past"
       ? "bg-blue-600 text-white"
@@ -566,9 +685,10 @@ const selectedUserName =
 
         <button
   onClick={() => {
-    setSelectedActionType("future");
-    handleAction("future");
-  }}
+  setSelectedActionType("future");
+  setRows([]);
+  setHasSearched(false);
+}}
   className={`px-4 py-2 rounded ${
     selectedActionType === "future"
       ? "bg-blue-600 text-white"
@@ -578,30 +698,44 @@ const selectedUserName =
   Future Schedule ℹ️
 </button>
 
-        <button
-  onClick={() => {
-    setSelectedActionType("completed");
-    handleAction("completed");
-  }}
-  className={`px-4 py-2 rounded ${
-    selectedActionType === "completed"
-      ? "bg-blue-600 text-white"
-      : "bg-slate-100"
-  }`}
->
-  Completed Activities ℹ️
-</button>
+  {isAdmin && (
+  <button
+    onClick={() => {
+  setSelectedActionType("completed");
+  setRows([]);
+  setHasSearched(false);
+}}
+    className={`px-4 py-2 rounded ${
+      selectedActionType === "completed"
+        ? "bg-blue-600 text-white"
+        : "bg-slate-100"
+    }`}
+  >
+    Completed Activities ℹ️
+  </button>
+)}
 
 
         <button
   onClick={() => {
+    if (!["past", "future"].includes(selectedActionType)) {
+      alert("Re-Activate works only for Past or Future Schedule");
+      return;
+    }
+
     if (selectedRows.length === 0) {
       alert("Select accounts to Reactivate");
       return;
     }
+
     setShowReactivateModal(true);
   }}
-  className="px-4 py-2 bg-green-600 text-white rounded"
+  disabled={!["past", "future"].includes(selectedActionType)}
+  className={`px-4 py-2 rounded text-white ${
+    ["past", "future"].includes(selectedActionType)
+      ? "bg-green-600"
+      : "bg-gray-400 cursor-not-allowed"
+  }`}
 >
   Re-Activate
 </button>
@@ -688,22 +822,27 @@ const selectedUserName =
 
           <tbody>
   {loading ? (
-  <tr>
-    <td colSpan={hasSearched ? 10 : 7} className="p-6 text-center">
-      Loading...
-    </td>
-  </tr>
-) : rows.length === 0 ? (
-  <tr>
-    <td colSpan={hasSearched ? 10 : 7} className="p-6 text-center text-slate-400">
-      No records found
-    </td>
-  </tr>
-) : (
-
+    <tr>
+      <td colSpan={hasSearched ? 10 : 7} className="p-6 text-center">
+        Loading...
+      </td>
+    </tr>
+  ) : !hasSearched ? (
+    <tr>
+      <td colSpan={7} className="p-6 text-center text-slate-400">
+        Please apply filters and search
+      </td>
+    </tr>
+  ) : rows.length === 0 ? (
+    <tr>
+      <td colSpan={10} className="p-6 text-center text-slate-400">
+        No records found
+      </td>
+    </tr>
+  ) : (
     paginatedRows.map((row, i) => {
-  const serialNumber =
-    (currentPage - 1) * ROWS_PER_PAGE + i + 1;
+      const serialNumber =
+        (currentPage - 1) * ROWS_PER_PAGE + i + 1;
 
   return (
     <tr key={i}>
@@ -785,46 +924,53 @@ const selectedUserName =
 {rows.length > 0 && (
   <div className="flex items-center justify-between mt-4 text-sm text-slate-600">
 
-    <div>
-      Page {currentPage} of {totalPages}
-    </div>
-
-    <div className="flex items-center gap-2">
-
-      <button
-        disabled={currentPage === 1}
-        onClick={() => setCurrentPage(1)}
-        className="px-2 py-1 border rounded disabled:opacity-50"
-      >
-        ⏮
-      </button>
-
-      <button
-        disabled={currentPage === 1}
-        onClick={() => setCurrentPage(prev => prev - 1)}
-        className="px-2 py-1 border rounded disabled:opacity-50"
-      >
-        ◀
-      </button>
-
-      <button
-        disabled={currentPage === totalPages}
-        onClick={() => setCurrentPage(prev => prev + 1)}
-        className="px-2 py-1 border rounded disabled:opacity-50"
-      >
-        ▶
-      </button>
-
-      <button
-        disabled={currentPage === totalPages}
-        onClick={() => setCurrentPage(totalPages)}
-        className="px-2 py-1 border rounded disabled:opacity-50"
-      >
-        ⏭
-      </button>
-
-    </div>
+  {/* Showing Records */}
+  <div>
+    Showing {firstRecord}-{lastRecord} of {rows.length}
   </div>
+
+  {/* Pagination Controls */}
+  <div className="flex items-center gap-2">
+
+    <button
+      disabled={currentPage === 1}
+      onClick={() => setCurrentPage(1)}
+      className="px-2 py-1 border rounded disabled:opacity-50"
+    >
+      ⏮
+    </button>
+
+    <button
+      disabled={currentPage === 1}
+      onClick={() => setCurrentPage(prev => prev - 1)}
+      className="px-2 py-1 border rounded disabled:opacity-50"
+    >
+      ◀
+    </button>
+
+    <span>
+      Page {currentPage} of {totalPages}
+    </span>
+
+    <button
+      disabled={currentPage === totalPages}
+      onClick={() => setCurrentPage(prev => prev + 1)}
+      className="px-2 py-1 border rounded disabled:opacity-50"
+    >
+      ▶
+    </button>
+
+    <button
+      disabled={currentPage === totalPages}
+      onClick={() => setCurrentPage(totalPages)}
+      className="px-2 py-1 border rounded disabled:opacity-50"
+    >
+      ⏭
+    </button>
+
+  </div>
+
+</div>
 )}
       {/* 🔵 Activity Details Modal */}
 {showDetailsModal && (
@@ -839,15 +985,15 @@ const selectedUserName =
       {/* Scrollable table */}
       <div className="p-4 max-h-[60vh] overflow-y-auto relative">
   <table className="w-full text-sm border border-collapse relative">
-          <thead className="sticky top-0 z-20">
-  <tr>
-    <th className="p-2 text-left bg-slate-100 border-b">Activity Date</th>
-    <th className="p-2 text-left bg-slate-100 border-b">Activity Time</th>
-    <th className="p-2 text-left bg-slate-100 border-b">User Name</th>
-    <th className="p-2 text-left bg-slate-100 border-b">Activity Type</th>
-    <th className="p-2 text-left bg-slate-100 border-b">Activity Status</th>
-    <th className="p-2 text-left bg-slate-100 border-b">Notes</th>
-  </tr>
+         <thead className="sticky top-0 z-20">
+<tr>
+  <th className="p-2 text-left bg-slate-100 border border-slate-300">Activity Date</th>
+  <th className="p-2 text-left bg-slate-100 border border-slate-300">Activity Time</th>
+  <th className="p-2 text-left bg-slate-100 border border-slate-300">User Name</th>
+  <th className="p-2 text-left bg-slate-100 border border-slate-300">Activity Type</th>
+  <th className="p-2 text-left bg-slate-100 border border-slate-300">Activity Status</th>
+  <th className="p-2 text-left bg-slate-100 border border-slate-300">Notes</th>
+</tr>
 </thead>
 
           <tbody className="bg-white relative z-10">
@@ -865,16 +1011,14 @@ const selectedUserName =
               Array.isArray(activityDetails) &&
               activityDetails.map((d, i) => (
 
-                <tr key={i} className="border-t">
-                  <td className="p-2">{d.activityDate}</td>
-                  <td className="p-2">{d.activityTime}</td>
-                  <td className="p-2">{d.userName}</td>
-                  <td className="p-2">{d.activityType}</td>
-                  <td className="p-2 whitespace-pre-line">
-  {d.activityStatus}
-</td>
-                  <td className="p-2 whitespace-pre-line">{d.notes}</td>
-                </tr>
+                <tr key={i}>
+  <td className="p-2 border border-slate-300">{d.activityDate}</td>
+  <td className="p-2 border border-slate-300">{d.activityTime}</td>
+  <td className="p-2 border border-slate-300">{d.userName}</td>
+  <td className="p-2 border border-slate-300">{d.activityType}</td>
+  <td className="p-2 border border-slate-300 whitespace-pre-line">{d.activityStatus}</td>
+  <td className="p-2 border border-slate-300 whitespace-pre-line">{d.notes}</td>
+</tr>
               ))
             )}
           </tbody>
@@ -1015,11 +1159,18 @@ const Input = ({ label, value, onChange }) => (
 const Select = ({ label, children, value, onChange, disabled }) => (
   <div>
     <label className="text-sm text-slate-600">{label}</label>
+
     <select
       value={value}
       onChange={onChange}
       disabled={disabled}
-      className="w-full mt-1 px-3 py-2 border rounded bg-slate-100 disabled:opacity-50"
+      className={`w-full mt-1 px-3 py-2 border rounded transition-all
+        ${
+          disabled
+            ? "bg-slate-300 text-black font-semibold border-slate-400 cursor-not-allowed"
+            : "bg-slate-100 text-black"
+        }
+      `}
     >
       {children}
     </select>

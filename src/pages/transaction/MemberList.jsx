@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 
 const Transaction = () => {
 const [selectedRows, setSelectedRows] = useState([]);
@@ -21,6 +21,14 @@ const [selectAllAllPages, setSelectAllAllPages] = useState(false);
 
   const [records, setRecords] = useState([]);
   const [recordCount, setRecordCount] = useState(0);
+
+  const role = localStorage.getItem("role");
+const userId = localStorage.getItem("userId");
+const userBranch = localStorage.getItem("branchName");
+const userCluster = localStorage.getItem("clusterName");
+
+const isBranchManager = role === "Branch Manager";
+const isRegionalManager = role?.startsWith("Regional Manager");
 
   const [clusters, setClusters] = useState([]);
   const [branches, setBranches] = useState([]);
@@ -55,28 +63,76 @@ const [selectedColumns, setSelectedColumns] = useState(
   allColumns.map(col => col.key)
 );
 
+const fetchAssignUsers = useCallback((branchName, cluster) => {
 
+console.log("📡 [AssignUsers API] Request:", { branchName, cluster });
+
+  fetch("https://mobile.coastal.bank.in:5001/api/assignUsers/v2", {
+    method: "POST",
+    headers: { 
+      "Content-Type": "application/json",
+      "x-user-id": userId
+    },
+    body: JSON.stringify({ branchName, cluster })
+  })
+    .then(res => res.json())
+    .then(data => {
+
+console.log("✅ [AssignUsers API] Success:", data);
+
+  if (Array.isArray(data)) {
+    setAssignUsers(data);
+  } else {
+    setAssignUsers([]);
+    console.error("AssignUsers API returned non-array:", data);
+  }
+})
+    .catch(err => console.error("❌ AssignUsers API Error:", err));
+}, [userId]);
+
+useEffect(() => {
+
+  if (isBranchManager) {
+    fetchAssignUsers(userBranch, userCluster);
+  } 
+  else if (isRegionalManager) {
+    fetchAssignUsers("", userCluster);
+  } 
+  else {
+    fetchAssignUsers("", "");
+  }
+
+}, [fetchAssignUsers, isBranchManager, isRegionalManager, userBranch, userCluster]);
 
   const handleViewDetails = async (accountNumber) => {
+    console.log("👁 View Details clicked:", accountNumber);
   try {
     setLoadingDetails(true);
     setShowDetails(true);
 
+
+console.log("📡 Calling View Details API...");
     const res = await fetch(
-      `http://40.80.79.26:5001/api/transaction/details/${accountNumber}`
-    );
+  `https://mobile.coastal.bank.in:5001/api/transaction/details/${accountNumber}`,
+  {
+    headers: {
+      "x-user-id": localStorage.getItem("userId")
+    }
+  }
+);
 
     const data = await res.json();
+    console.log("✅ View Details Success:", data);
     setViewDetailsData(data);
   } catch (err) {
-    console.error("View details error:", err);
+    console.error("❌ View Details Error:", err);
   } finally {
     setLoadingDetails(false);
   }
 };
 
   useEffect(() => {
-  fetch("http://40.80.79.26:5001/api/clusters")
+  fetch("https://mobile.coastal.bank.in:5001/api/clusters")
     .then((res) => res.json())
     .then((data) => {
       setClusters([
@@ -88,65 +144,122 @@ const [selectedColumns, setSelectedColumns] = useState(
 }, []);
 
 useEffect(() => {
-  fetch("http://40.80.79.26:5001/api/branches")
+  fetch("https://mobile.coastal.bank.in:5001/api/branches")
     .then((res) => res.json())
-    .then((data) => setBranches(data))
+    .then((data) => {
+      const filtered = data.filter(
+        b => b.branch_name !== "Corporate Office"
+      );
+      setBranches(filtered);
+    })
     .catch((err) => console.error("Initial branch fetch error:", err));
 }, []);
 
 useEffect(() => {
-  fetch("http://40.80.79.26:5001/api/products")
+  fetch("https://mobile.coastal.bank.in:5001/api/products")
     .then((res) => res.json())
     .then((data) => setProducts(data))
     .catch((err) => console.error("Product fetch error:", err));
 }, []);
 
+
 useEffect(() => {
-  fetchAssignUsers("", "");
-}, []);
+
+  // Branch Manager restriction
+  if (isBranchManager) {
+    setFilters(prev => ({
+      ...prev,
+      cluster: userCluster,
+      branchName: userBranch
+    }));
+
+    fetchAssignUsers(userBranch, userCluster);
+  }
+
+  // Regional Manager restriction
+  if (isRegionalManager) {
+
+    setFilters(prev => ({
+      ...prev,
+      cluster: userCluster
+    }));
+
+    // Load branches under that cluster
+    fetch(`https://mobile.coastal.bank.in:5001/api/branches/${encodeURIComponent(userCluster)}`)
+      .then(res => res.json())
+      .then(data => setBranches(data));
+
+    fetchAssignUsers("", userCluster);
+  }
+
+}, [isBranchManager, isRegionalManager, userBranch, userCluster, fetchAssignUsers]);
 
 const handleClusterChange = (e) => {
+  console.log("🌍 Cluster changed:", e.target.value);
   const cluster = e.target.value;
 
   setFilters(prev => ({ ...prev, cluster, branchName: "" }));
   setBranches([]);
+  setAssignUsers([]);   // clear previous users
   selectedUserRef.current = "";
   setSelectedUserId("");
 
-  if (!cluster || cluster === "Corporate Office") {
-  fetch("http://40.80.79.26:5001/api/branches")
+  if (!cluster) {
+    fetchAssignUsers("", "");
+    return;
+  }
+
+  console.log("📡 Fetching branches for cluster:", cluster);
+  // Load branches under cluster
+  fetch(`https://mobile.coastal.bank.in:5001/api/branches/${encodeURIComponent(cluster)}`)
     .then(res => res.json())
-    .then(data => setBranches(data));
+    .then(data => {
+  console.log("✅ Branches loaded:", data);
+  setBranches(data);
+});
 
-  fetchAssignUsers("", "");
-  return;
-}
-
-  fetch(`http://40.80.79.26:5001/api/branches/${encodeURIComponent(cluster)}`)
-    .then(res => res.json())
-    .then(data => setBranches(data));
-
+  // Load cluster users
   fetchAssignUsers("", cluster);
 };
 
 const handleSearch = () => {
+
+  console.log("🔍 Search clicked with filters:", filters);
   // Check if at least one filter has a value
   const hasAnyFilter = Object.values(filters).some(
     (value) => value !== "" && value !== null
   );
 
   if (!hasAnyFilter) {
+    console.warn("❌ No filters selected");
     alert("Please select at least one filter before searching");
     return;
   }
 
-  fetch("http://40.80.79.26:5001/api/transaction/search", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(filters),
-  })
+  // 🚫 Block Marketing & Welcome Call (show no data)
+if (filters.queue === "Marketing" || filters.queue === "Welcome Call") {
+  console.warn("❌ Blocked queue selected:", filters.queue);
+  setRecords([]);
+  setRecordCount(0);
+  setCurrentPage(1);
+  setSelectedRows([]);
+  setSelectAllCurrentPage(false);
+  setSelectAllAllPages(false);
+  return; // ❌ stop API call
+}
+
+console.log("📡 Calling Search API...");
+  fetch("https://mobile.coastal.bank.in:5001/api/transaction/search", {
+  method: "POST",
+  headers: { 
+    "Content-Type": "application/json",
+    "x-user-id": userId
+  },
+  body: JSON.stringify(filters),
+})
     .then((res) => res.json())
     .then((data) => {
+      console.log("✅ Search API Success:", data);
       setRecords(data);
       setRecordCount(data.length);
       setSelectedRows([]);
@@ -154,7 +267,7 @@ const handleSearch = () => {
       setSelectAllAllPages(false);
       setCurrentPage(1);
     })
-    .catch((err) => console.error("Search API error:", err));
+    .catch((err) => console.error("❌ Search API Error:", err));
 };
 
 const indexOfLastRecord = currentPage * recordsPerPage;
@@ -165,42 +278,71 @@ const currentRecords = safeRecords.slice(indexOfFirstRecord, indexOfLastRecord);
 const totalPages = Math.max(1, Math.ceil(records.length / recordsPerPage));
 
 const handleReset = () => {
-  setFilters({
-    mobileNumber: "",
-    cluster: "",
-    pincode: "",
-    branchName: "",
-    product: "",
-    assignedTo: "",
-    loanAccount: "",
-    queue: "",
-    dpdQueue: "",
-    memberName: ""
-  });
+
+  if (isBranchManager) {
+
+    setFilters({
+      mobileNumber: "",
+      cluster: userCluster,
+      pincode: "",
+      branchName: userBranch,
+      product: "",
+      assignedTo: "",
+      loanAccount: "",
+      queue: "",
+      dpdQueue: "",
+      memberName: ""
+    });
+
+    fetchAssignUsers(userBranch, userCluster);
+
+  } 
+
+  else if (isRegionalManager) {
+
+    setFilters({
+      mobileNumber: "",
+      cluster: userCluster,
+      pincode: "",
+      branchName: "",
+      product: "",
+      assignedTo: "",
+      loanAccount: "",
+      queue: "",
+      dpdQueue: "",
+      memberName: ""
+    });
+
+    fetchAssignUsers("", userCluster);
+
+  } 
+
+  else {
+
+    setFilters({
+      mobileNumber: "",
+      cluster: "",
+      pincode: "",
+      branchName: "",
+      product: "",
+      assignedTo: "",
+      loanAccount: "",
+      queue: "",
+      dpdQueue: "",
+      memberName: ""
+    });
+
+    fetchAssignUsers("", "");
+  }
 
   setRecords([]);
   setRecordCount(0);
   setCurrentPage(1);
-
   setSelectedRows([]);
   setSelectAllCurrentPage(false);
   setSelectAllAllPages(false);
-
-  // Optional: reload dropdown defaults
-  fetchAssignUsers("", "");
 };
 
-
-const fetchAssignUsers = (branchName, cluster) => {
-  fetch("http://40.80.79.26:5001/api/assignUsers", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ branchName, cluster })
-  })
-  .then(res => res.json())
-  .then(data => setAssignUsers(data))
-  .catch(err => console.error("Assign users fetch error:", err));
-};
 
 const dpdOptions = [
   { value: "0-30", label: "0-30 Days" },
@@ -216,14 +358,22 @@ const queueOptions = [
 ];
 
 const handleAssign = async () => {
+  console.log("📌 Assign clicked", {
+  selectedRows,
+  assignedTo: selectedUserRef.current
+});
   if (assigning) return;
 
+
   if (selectedRows.length === 0) {
+    console.warn("❌ No rows selected");
     alert("Select accounts first");
     return;
   }
 
+  
   if (!selectedUserRef.current) {
+    console.warn("❌ No user selected");
     alert("Select user to assign");
     return;
   }
@@ -231,13 +381,14 @@ const handleAssign = async () => {
   setAssigning(true);
 
   try {
+    console.log("📡 Calling Assign API...");
     const payload = {
   loanIds: selectedRows,
   assignedToUserId: selectedUserRef.current,
   assignedByAdminId: localStorage.getItem("userId")
 };
 
-    const res = await fetch("http://40.80.79.26:5001/api/assign", {
+    const res = await fetch("https://mobile.coastal.bank.in:5001/api/assign", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
@@ -246,7 +397,9 @@ const handleAssign = async () => {
   body: JSON.stringify(payload)
 });
 
+
     const data = await res.json();
+    console.log("✅ Assign Success:", data);
     alert(data.message);
 
     setSelectedRows([]);
@@ -255,7 +408,7 @@ const handleAssign = async () => {
 
     handleSearch();
   } catch (err) {
-    console.error("Assign error:", err);
+    console.error("❌ Assign Error:", err);
     alert("Assignment failed");
   } finally {
     setAssigning(false);
@@ -263,8 +416,13 @@ const handleAssign = async () => {
 };
 
 const handleDownloadPDF = async () => {
+  console.log("📄 PDF Download clicked", {
+  selectedRows,
+  selectedColumns
+});
   
-  if (records.length === 0) {
+ if (records.length === 0) {
+  console.warn("❌ No records for PDF");
   alert("No records available to generate PDF");
   return;
 }
@@ -278,6 +436,7 @@ if (selectedRows.length === 0) {
 
   // 🔴 Safety check
   if (records.length === 0) {
+    console.warn("❌ No rows selected for PDF");
     alert("No records available to generate PDF");
     return;
   }
@@ -299,8 +458,9 @@ if (selectedRows.length === 0) {
     };
   });
 
+console.log("📡 Calling PDF API...");
   const response = await fetch(
-    "http://40.80.79.26:5001/api/transaction/export-pdf",
+    "https://mobile.coastal.bank.in:5001/api/transaction/export-pdf",
     {
       method: "POST",
       headers: {
@@ -316,10 +476,12 @@ if (selectedRows.length === 0) {
   );
 
   if (!response.ok) {
+    console.error("❌ PDF API Failed");
     alert("Failed to generate PDF");
     return;
   }
 
+console.log("✅ PDF Generated Successfully");
     const blob = await response.blob();
     const url = window.URL.createObjectURL(blob);
 
@@ -332,7 +494,7 @@ if (selectedRows.length === 0) {
     setShowPrintModal(false);
 
   } catch (err) {
-    console.error("PDF download error:", err);
+    console.error("❌ PDF Error:", err);
   }
 };
 
@@ -357,9 +519,13 @@ if (selectedRows.length === 0) {
   labelKey="cluster_name"
   value={filters.cluster}
   onChange={(e) => {
-    setFilters({ ...filters, cluster: e.target.value });
-    handleClusterChange(e);
-  }}
+  if (isBranchManager || isRegionalManager) return;
+
+  setFilters({ ...filters, cluster: e.target.value });
+  handleClusterChange(e);
+}}
+  disabled={isBranchManager || isRegionalManager}
+  boldValue={isBranchManager || isRegionalManager}  // ✅ makes text bold
 />
 
   <Input 
@@ -375,14 +541,22 @@ if (selectedRows.length === 0) {
   labelKey="branch_name"
   value={filters.branchName}
   onChange={(e) => {
-    const branch = e.target.value;
-    selectedUserRef.current = "";
-    setSelectedUserId("");
-    setFilters(prev => {
-      fetchAssignUsers(branch, prev.cluster);
-      return { ...prev, branchName: branch };
-    });
-  }}
+  if (isBranchManager) return;
+
+  const branch = e.target.value;
+
+  selectedUserRef.current = "";
+  setSelectedUserId("");
+
+  setFilters(prev => ({
+    ...prev,
+    branchName: branch
+  }));
+
+  fetchAssignUsers(branch, filters.cluster);
+}}
+  disabled={isBranchManager}
+  boldValue={isBranchManager}   // ✅ makes text bold
 />
 
   <Select 
@@ -719,11 +893,11 @@ if (selectedRows.length === 0) {
 
           <ReadOnly
             label="Outstanding Loan Amount"
-            value={viewDetailsData.outstandingAmount}
+            value={viewDetailsData.interestDue}
           />
-          <ReadOnly label="Interest Due" value={viewDetailsData.interestDue} />
+          <ReadOnly label="Interest Due" value={viewDetailsData.principalDue} />
 
-          <ReadOnly label="Principal Due" value={viewDetailsData.principalDue} />
+          <ReadOnly label="Principal Due" value={viewDetailsData.outstandingAmount} />
           <ReadOnly label="Interest Rate" value={viewDetailsData.interestRate} />
 
         </div>
@@ -809,20 +983,37 @@ const Input = ({ label, value, onChange }) => (
   </div>
 );
 
-const Select = ({ label, options = [], valueKey, labelKey, value, onChange }) => (
+const Select = ({
+  label,
+  options = [],
+  valueKey,
+  labelKey,
+  value,
+  onChange,
+  disabled = false
+}) => (
   <div>
     <label className="text-sm text-slate-600">{label}</label>
+
     <select
       value={value}
       onChange={onChange}
-      className="w-full mt-1 px-3 py-2 border rounded bg-slate-100"
+      disabled={disabled}
+      className={`w-full mt-1 px-3 py-2 border rounded transition-all
+        ${
+          disabled
+            ? "bg-slate-300 text-black font-semibold border-slate-400 cursor-not-allowed"
+            : "bg-slate-100 text-black"
+        }
+      `}
     >
       <option value="">Select</option>
-      {options.map((item, index) => (
-        <option key={index} value={item[valueKey]}>
-          {item[labelKey]}
-        </option>
-      ))}
+      {Array.isArray(options) &&
+        options.map((item, index) => (
+          <option key={index} value={item[valueKey]}>
+            {item[labelKey]}
+          </option>
+        ))}
     </select>
   </div>
 );

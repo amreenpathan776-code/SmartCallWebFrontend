@@ -15,6 +15,8 @@ const User = () => {
 const [selectAllCurrentPage, setSelectAllCurrentPage] = useState(false);
 const [selectAllAllPages, setSelectAllAllPages] = useState(false);
 const [totalRecords, setTotalRecords] = useState(0);
+const [filterUserId, setFilterUserId] = useState("");
+const [filterStatus, setFilterStatus] = useState("");
   
 
   // Form Data
@@ -22,31 +24,29 @@ const [formData, setFormData] = useState({
   userId: "",
   userName: "",
   branchId: "",
-  roles: [], 
+  roles: [],
   dateOfBirth: "",
   mobile: "",
   validFrom: "",
-  validUntil: ""
+  validUntil: "",
+  designation: "",
+  status: "Active"   // ✅ ADD THIS
 });
 
-useEffect(() => {
-  loadBranches();
-  loadUsers(1);
-  loadRoles(); 
-}, []);
-
   /* ================= LOAD USERS ================= */
-const loadUsers = async (page = 1) => {
+const loadUsers = useCallback(async (page = 1) => {
   const res = await fetch(
-    "http://40.80.79.26:5001/api/users/list",
+    "https://mobile.coastal.bank.in:5001/api/users/list",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         page,
         pageSize: 15,
+        userId: "",
         name: "",
-        branch: ""
+        branch: "",
+        status: filterStatus
       })
     }
   );
@@ -55,15 +55,21 @@ const loadUsers = async (page = 1) => {
   setUsers(data.records || []);
   setTotalPages(data.pages || 1);
   setCurrentPage(data.page || 1);
-  setTotalRecords(data.totalRecords || 0); 
-};
+  setTotalRecords(data.totalRecords || 0);
+}, [filterStatus]);
+
+useEffect(() => {
+  loadBranches();
+  loadUsers(1);
+  loadRoles(); 
+}, [loadUsers]);
 
 const [currentPage, setCurrentPage] = useState(1);
 const [totalPages, setTotalPages] = useState(1);
 
 /* ================= LOAD BRANCHES ================= */
 const loadBranches = async () => {
-  const res = await fetch("http://40.80.79.26:5001/api/branches");
+  const res = await fetch("https://mobile.coastal.bank.in:5001/api/branches");
   const data = await res.json();
   
   const mapped = data.map(b => ({
@@ -71,13 +77,19 @@ const loadBranches = async () => {
     branchName: b.branch_name
   }));
 
+  // ✅ Add Corporate Office manually
+  mapped.unshift({
+    branchId: "CORP",
+    branchName: "Corporate Office"
+  });
+
   console.log("BRANCHES LOADED:", mapped);
   setBranches(mapped);
 };
 
 const loadRoles = async () => {
   const res = await fetch(
-    "http://40.80.79.26:5001/api/roles/list",
+    "https://mobile.coastal.bank.in:5001/api/roles/list",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -92,16 +104,18 @@ const loadRoles = async () => {
   /* ================= SEARCH ================= */
   const handleSearch = useCallback(async (page = 1) => {
   const res = await fetch(
-    "http://40.80.79.26:5001/api/users/list",
+    "https://mobile.coastal.bank.in:5001/api/users/list",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        page,
-        pageSize: 15,
-        name: filterName,
-        branch: filterBranch
-      })
+  page,
+  pageSize: 15,
+  userId: filterUserId,
+  name: filterName,
+  branch: filterBranch,
+  status: filterStatus   // ✅ ADD
+})
     }
   );
 
@@ -110,18 +124,41 @@ const loadRoles = async () => {
   setTotalPages(data.pages || 1);
   setCurrentPage(data.page || 1);
   setTotalRecords(data.totalRecords || 0);
-}, [filterName, filterBranch]);
+}, [filterUserId, filterName, filterBranch, filterStatus]);
 
   /* ================= RESET ================= */
   const handleReset = async () => {
+  setFilterUserId("");
   setFilterName("");
   setFilterBranch("");
+  setFilterStatus("");   // ✅ MOVE UP
+
+  setSelectedIds([]);
+  setSelectAllCurrentPage(false);
+  setSelectAllAllPages(false);
+
   setCurrentPage(1);
-  loadUsers(1);
+
+  loadUsers(1);   // ✅ AFTER clearing status
 };
 
   /* ================= SAVE ================= */
   const handleSave = async () => {
+
+  const missingFields = [];
+
+  if (!formData.userId.trim()) missingFields.push("User Id");
+  if (!formData.userName.trim()) missingFields.push("User Name");
+  if (!formData.branchId) missingFields.push("Branch");
+  if (!formData.dateOfBirth) missingFields.push("Date of Birth");
+  if (!formData.mobile.trim()) missingFields.push("Mobile Number");
+  if (formData.roles.length === 0) missingFields.push("Role");
+
+  if (missingFields.length > 0) {
+    alert("Please fill all the incomplete fields:\n\n" + missingFields.join("\n"));
+    return;
+  }
+
   const selectedBranch = branches.find(
   b => String(b.branchId) === String(formData.branchId)
 );
@@ -134,13 +171,15 @@ const payload = {
   mobileNumber: formData.mobile,
   dateOfBirth: formData.dateOfBirth !== "" ? formData.dateOfBirth : null,
   validFrom: formData.validFrom !== "" ? formData.validFrom : null,
-  validUntil: formData.validUntil !== "" ? formData.validUntil : null
+  validUntil: formData.validUntil !== "" ? formData.validUntil : null,
+  designation: formData.designation,
+  status: formData.status   // ✅ ADD THIS
 };
 
   const method = selectedUser ? "PUT" : "POST";
   const url = selectedUser
-    ? `http://40.80.79.26:5001/api/users/${selectedUser.userId}`
-    : `http://40.80.79.26:5001/api/users`;
+    ? `https://mobile.coastal.bank.in:5001/api/users/${selectedUser.userId}`
+    : `https://mobile.coastal.bank.in:5001/api/users`;
 
   const res = await fetch(url, {
     method,
@@ -153,38 +192,81 @@ const payload = {
 
   setShowForm(false);
   setSelectedUser(null);
-  loadUsers(1);
+  if (filterUserId || filterName || filterBranch || filterStatus) {
+  handleSearch(currentPage);
+} else {
+  loadUsers(currentPage);
+}
 };
 
   /* ================= DELETE ================= */
   const handleDelete = async () => {
-    if (!selectedUser) return;
 
-    const confirmed = window.confirm("Are you sure you want to delete this user?");
-    if (!confirmed) return;
+  if (selectedIds.length === 0) return;
 
-    await fetch(`http://40.80.79.26:5001/api/users/${selectedUser.userId}`, {
-  method: "DELETE"
-});
+  const confirmed = window.confirm(
+    `Delete ${selectedIds.length} selected user(s)?`
+  );
 
-    setSelectedUser(null);
-    setShowForm(false);
-    loadUsers();
-  };
+  if (!confirmed) return;
+
+  try {
+
+    // Delete from backend
+    await Promise.all(
+      selectedIds.map(id =>
+        fetch(`https://mobile.coastal.bank.in:5001/api/users/${id}`, {
+          method: "DELETE"
+        })
+      )
+    );
+
+    // Remove from frontend immediately
+    setUsers(prev => prev.filter(u => !selectedIds.includes(u.userId)));
+
+    setSelectedIds([]);
+    setSelectAllCurrentPage(false);
+    setSelectAllAllPages(false);
+
+    // Reload correct page
+    if (filterUserId || filterName || filterBranch || filterStatus) {
+  handleSearch(currentPage);
+} else {
+  loadUsers(currentPage);
+}
+
+  } catch (err) {
+    alert("Failed to delete users");
+  }
+};
 
   return (
     <div className="bg-white rounded-xl border p-6">
 
       {/* ================= FILTER BAR ================= */}
       <div className="flex flex-wrap gap-4 mb-4">
-        <input
-          type="text"
-          placeholder="Filter by User Name..."
-          value={filterName}
-          onChange={(e) => setFilterName(e.target.value)}
-          className="border rounded px-3 py-2 w-56"
-        />
 
+<input
+  type="text"
+  placeholder="Filter by User ID..."
+  value={filterUserId}
+  onChange={(e) => setFilterUserId(e.target.value)}
+  onKeyDown={(e) => {
+    if (e.key === "Enter") handleSearch(1);
+  }}
+  className="border rounded px-3 py-2 w-56"
+/>
+
+        <input
+  type="text"
+  placeholder="Filter by User Name..."
+  value={filterName}
+  onChange={(e) => setFilterName(e.target.value)}
+  onKeyDown={(e) => {
+    if (e.key === "Enter") handleSearch(1);
+  }}
+  className="border rounded px-3 py-2 w-56"
+/>
         <select
   value={filterBranch}
   onChange={(e) => setFilterBranch(e.target.value)}
@@ -198,6 +280,16 @@ const payload = {
   ))}
 </select>
 
+<select
+  value={filterStatus}
+  onChange={(e) => setFilterStatus(e.target.value)}
+  className="border rounded px-3 py-2 w-56 text-black bg-white"
+>
+  <option value="">Filter by Status...</option>
+  <option value="Active">Active</option>
+  <option value="In-active">In-active</option>
+</select>
+
         <button onClick={() => handleSearch(1)} className="px-4 py-2 bg-primary text-white rounded">
   Search
 </button>
@@ -206,15 +298,17 @@ const payload = {
   onClick={() => {
     setSelectedUser(null);
     setFormData({
-      userId: "",
-      userName: "",
-      branchId: "",
-      roles: [],
-      dateOfBirth: "",
-      mobile: "",
-      validFrom: "",
-      validUntil: ""
-    });
+  userId: "",
+  userName: "",
+  branchId: "",
+  roles: [],
+  dateOfBirth: "",
+  mobile: "",
+  validFrom: "",
+  validUntil: "",
+  designation: "",
+  status: "Active"   // ✅ ADD THIS
+});
     setShowForm(true);
   }}
   className="px-4 py-2 bg-slate-100 rounded"
@@ -228,14 +322,16 @@ const payload = {
         </button>
 
         <button
-          onClick={handleDelete}
-          disabled={!selectedUser}
-          className={`px-4 py-2 rounded ${
-            selectedUser ? "bg-red-600 text-white" : "bg-gray-300 cursor-not-allowed"
-          }`}
-        >
-          Delete User
-        </button>
+  onClick={handleDelete}
+  disabled={selectedIds.length === 0}
+  className={`px-4 py-2 rounded ${
+    selectedIds.length > 0
+      ? "bg-red-600 text-white"
+      : "bg-gray-300 cursor-not-allowed"
+  }`}
+>
+  Delete User
+</button>
 
         <span className="ml-auto text-sm text-slate-600">
           No of total records is : {totalRecords}
@@ -252,7 +348,10 @@ const payload = {
         <label className="text-sm font-medium">User Id *</label>
         <input
   value={formData.userId}
-  onChange={(e) => !selectedUser && setFormData({ ...formData, userId: e.target.value })}
+  onChange={(e) =>
+    !selectedUser &&
+    setFormData({ ...formData, userId: e.target.value })
+  }
   disabled={!!selectedUser}
   className={`mt-1 w-full border rounded px-3 py-2 ${
     selectedUser ? "bg-gray-200 cursor-not-allowed" : ""
@@ -348,6 +447,36 @@ const payload = {
           }
         />
       </div>
+
+      {/* Designation */}
+<div>
+  <label className="text-sm font-medium">Designation</label>
+  <input
+    type="text"
+    className="mt-1 w-full border rounded px-3 py-2"
+    value={formData.designation}
+    onChange={(e) =>
+      setFormData({ ...formData, designation: e.target.value })
+    }
+    placeholder="Enter designation"
+  />
+</div>
+
+{/* Status */}
+<div>
+  <label className="text-sm font-medium">Status *</label>
+  <select
+    className="mt-1 w-full border rounded px-3 py-2"
+    value={formData.status}
+    onChange={(e) =>
+      setFormData({ ...formData, status: e.target.value })
+    }
+  >
+    <option value="Active">Active</option>
+    <option value="In-active">In-active</option>
+  </select>
+</div>
+
     </div>
 
     {/* ================= DESCRIPTION / ROLES ================= */}
@@ -462,18 +591,20 @@ const payload = {
 
     setSelectedUser(u);
     setFormData({
-      userId: u.userId,
-      userName: u.userName,
-      branchId: branch?.branchId || "",
-      branchName: u.branchName,
-      roles: u.roleIds
-  ? u.roleIds.split(",").map(Number)
-  : [],
-      dateOfBirth: u.dateOfBirth ? u.dateOfBirth.split("T")[0] : "",
-      mobile: u.mobileNumber || "",
-      validFrom: u.validFrom ? u.validFrom.split("T")[0] : "",
-      validUntil: u.validUntil ? u.validUntil.split("T")[0] : ""
-    });
+  userId: u.userId,
+  userName: u.userName,
+  branchId: branch?.branchId || "",
+  branchName: u.branchName,
+  roles: u.roleIds
+    ? u.roleIds.split(",").map(Number)
+    : [],
+  dateOfBirth: u.dateOfBirth ? u.dateOfBirth.split("T")[0] : "",
+  mobile: u.mobileNumber || "",
+  validFrom: u.validFrom ? u.validFrom.split("T")[0] : "",
+  validUntil: u.validUntil ? u.validUntil.split("T")[0] : "",
+  designation: u.designation || "",
+  status: u.status || "Active"   // ✅ ADD THIS
+});
 
     setShowForm(true);
   }}
@@ -507,7 +638,17 @@ const payload = {
           <td className="border p-2">{u.userId}</td>
           <td className="border p-2">{u.userName}</td>
           <td className="border p-2">{u.branchName}</td>
-          <td className="border p-2">{u.status}</td>
+          <td className="border p-2 text-center">
+  <span
+    className={`px-2 py-1 rounded text-xs font-semibold ${
+      u.status === "Active"
+        ? "bg-green-100 text-green-700"
+        : "bg-red-100 text-red-700"
+    }`}
+  >
+    {u.status}
+  </span>
+</td>
           <td className="border p-2">{u.role}</td>
         </tr>
       );
@@ -531,16 +672,18 @@ const payload = {
 
         if (checked) {
           const res = await fetch(
-            "http://40.80.79.26:5001/api/users/list",
+            "https://mobile.coastal.bank.in:5001/api/users/list",
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                page: 1,
-                pageSize: 999999,
-                name: filterName,
-                branch: filterBranch
-              })
+  page: 1,
+  pageSize: 999999,
+  userId: filterUserId,
+  name: filterName,
+  branch: filterBranch,
+  status: filterStatus   // ✅ ADD
+})
             }
           );
 
@@ -562,7 +705,7 @@ const payload = {
     <button
       disabled={currentPage === 1}
       onClick={() => {
-        if (filterName || filterBranch)
+        if (filterUserId || filterName || filterBranch || filterStatus)
           handleSearch(1);
         else
           loadUsers(1);
@@ -577,7 +720,7 @@ const payload = {
     <button
       disabled={currentPage === 1}
       onClick={() => {
-        if (filterName || filterBranch)
+        if (filterUserId || filterName || filterBranch || filterStatus)
           handleSearch(currentPage - 1);
         else
           loadUsers(currentPage - 1);
@@ -594,7 +737,7 @@ const payload = {
     <button
       disabled={currentPage === totalPages}
       onClick={() => {
-        if (filterName || filterBranch)
+        if (filterUserId || filterName || filterBranch || filterStatus)
           handleSearch(currentPage + 1);
         else
           loadUsers(currentPage + 1);
@@ -609,7 +752,7 @@ const payload = {
     <button
       disabled={currentPage === totalPages}
       onClick={() => {
-        if (filterName || filterBranch)
+        if (filterUserId || filterName || filterBranch || filterStatus)
           handleSearch(totalPages);
         else
           loadUsers(totalPages);

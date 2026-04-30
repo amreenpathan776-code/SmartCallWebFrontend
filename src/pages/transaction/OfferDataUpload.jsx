@@ -1,4 +1,21 @@
 const OfferDataUpload = () => {
+
+  const role = localStorage.getItem("role");
+const isBranchManager = role === "Branch Manager";
+
+if (isBranchManager) {
+  return (
+    <div className="bg-white rounded-xl shadow p-10 text-center">
+      <h2 className="text-xl font-semibold text-red-600 mb-4">
+        Access Restricted
+      </h2>
+      <p className="text-slate-600 text-lg">
+        Please Contact Admin to access this Page.
+      </p>
+    </div>
+  );
+}
+
   return (
     <main className="flex-1 p-6 bg-slate-100">
       <div className="bg-white rounded-xl shadow p-6">

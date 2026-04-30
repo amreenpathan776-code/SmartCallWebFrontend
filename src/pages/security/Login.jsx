@@ -1,5 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+
+// ✅ ADD THIS EXACTLY HERE
+const logInfo = (msg, data) => console.log(`📡 ${msg}`, data || "");
+const logSuccess = (msg, data) => console.log(`✅ ${msg}`, data || "");
+const logError = (msg, data) => console.error(`❌ ${msg}`, data || "");
+const logWarn = (msg, data) => console.warn(`⚠️ ${msg}`, data || "");
 
 export default function Login() {
   const navigate = useNavigate();
@@ -8,13 +14,25 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
+  const [loginError, setLoginError] = useState("");
+
+ useEffect(() => {
+  logInfo("Login page loaded");
+}, []);
+  
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    logInfo("Login attempt started", { userId: username });
     setLoading(true);
+    setLoginError("");
 
     try {
-      const res = await fetch("http://40.80.79.26:5001/api/login", {
+      logInfo("Calling login API", { userId: username });
+      logInfo("Login request payload", {
+  userId: username
+});
+      const res = await fetch("https://mobile.coastal.bank.in:5001/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -24,18 +42,45 @@ export default function Login() {
       });
 
       const data = await res.json();
+      logInfo("Login API status", res.status);
+      logInfo("Login API response received", data);
 
       if (!res.ok) {
-        alert(data.message || "Login failed");
-        setLoading(false);
-        return;
-      }
+        logWarn("Login failed", { userId: username, message: data.message });
+  setLoginError(data.message || "Login failed");
+  setLoading(false);
+  return;
+}
 
-      localStorage.setItem("role", data.role);
-      localStorage.setItem("userId", username);
-      navigate("/dashboard");
+logSuccess("Login successful", {
+  userId: data.userId,
+  role: data.role,
+  branch: data.branchName,
+  branchCode: data.branchCode,
+  cluster: data.clusterName
+});
 
-    } catch {
+logInfo("Clearing old session");
+// 🔥 Clear old session
+localStorage.clear();
+
+// Save new login data
+localStorage.setItem("userId", data.userId);
+localStorage.setItem("role", data.role);
+localStorage.setItem("branchName", data.branchName);
+localStorage.setItem("branchCode", data.branchCode);
+localStorage.setItem("clusterName", data.clusterName);
+
+logInfo("User session stored in localStorage", {
+  userId: data.userId,
+  role: data.role
+});
+
+logInfo("Navigating to dashboard", { userId: data.userId });
+navigate("/dashboard");
+
+    } catch (err) {
+  logError("Login API unreachable", err);
       alert("Server unreachable. Try again later.");
     }
 
@@ -57,7 +102,10 @@ export default function Login() {
               type="text"
               required
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(e) => {
+  logInfo("Username input changed", e.target.value);
+  setUsername(e.target.value);
+}}
               style={styles.input}
             />
 
@@ -66,9 +114,23 @@ export default function Login() {
               type="password"
               required
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+  logInfo("Password input entered"); // ❗ never log password
+  setPassword(e.target.value);
+}}
               style={styles.input}
             />
+
+            {loginError && (
+  <div style={{
+    color: "red",
+    fontSize: "13px",
+    marginTop: "-10px",
+    marginBottom: "12px"
+  }}>
+    {loginError}
+  </div>
+)}
 
             <button
               type="submit"
@@ -84,35 +146,24 @@ export default function Login() {
             <div style={{ marginTop: 12, textAlign: "center" }}>
               <button
                 type="button"
-                onClick={() => setShowForgot(true)}
+                onClick={() => {
+  logInfo("Forgot password modal opened");
+  setShowForgot(true);
+}}
                 style={styles.linkBtn}
               >
                 Forgot password
               </button>
-
-<div style={{ marginTop: 10, textAlign: "center" }}>
-  <button
-    type="button"
-    onClick={() => navigate("/dashboard")}
-    style={{
-      background: "none",
-      border: "none",
-      color: "#28a745",
-      cursor: "pointer",
-      fontWeight: 600
-    }}
-  >
-    Home
-  </button>
-</div>
-
             </div>
           </form>
         </div>
       </div>
 
       {showForgot && (
-        <ForgotPasswordModal onClose={() => setShowForgot(false)} />
+        <ForgotPasswordModal onClose={() => {
+  logInfo("Forgot password modal closed");
+  setShowForgot(false);
+}} />
       )}
     </>
   );
@@ -130,12 +181,14 @@ function ForgotPasswordModal({ onClose }) {
 
 
   const handleUserIdSubmit = async () => {
+    logInfo("Forgot password - user validation started", { userId });
   setErrorMsg("");
   setCheckingUser(true);
 
   try {
+    logInfo("Calling validate-user API", { userId });
     const res = await fetch(
-      "http://40.80.79.26:5001/api/forgot-password/validate-user",
+      "https://mobile.coastal.bank.in:5001/api/forgot-password/validate-user",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -146,9 +199,14 @@ function ForgotPasswordModal({ onClose }) {
     let data = {};
     try {
       data = await res.json();
+      logInfo("Validate-user API response", data);
     } catch {}
 
     if (!res.ok) {
+  logWarn("User validation failed", {
+    userId,
+    status: res.status
+  });
       if (res.status === 401 || res.status === 403) {
         setErrorMsg("User is not authorized. Contact Administrator.");
       } else {
@@ -158,10 +216,15 @@ function ForgotPasswordModal({ onClose }) {
       return;
     }
 
+    logSuccess("User validated successfully", {
+  userId,
+  securityQuestion: data.securityQuestion
+});
     setSecurityQuestion(data.securityQuestion);
     setStep(2);
 
-  } catch {
+  } catch (err) {
+  logError("Validate-user API error", { userId, err });
     setErrorMsg("Server error. Please try again.");
   }
 
@@ -170,16 +233,19 @@ function ForgotPasswordModal({ onClose }) {
 
 
 const handleSavePassword = async () => {
+  logInfo("Password reset started", { userId });
   setErrorMsg("");
 
-  if (newPassword !== confirmPassword) {
+if (newPassword !== confirmPassword) {
+  logWarn("Password mismatch during reset", { userId });
     setErrorMsg("Passwords do not match");
     return;
   }
 
   try {
+    logInfo("Calling reset-password API", { userId });
     const res = await fetch(
-      "http://40.80.79.26:5001/api/forgot-password/reset-password",
+      "https://mobile.coastal.bank.in:5001/api/forgot-password/reset-password",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -192,27 +258,36 @@ const handleSavePassword = async () => {
     );
 
     const data = await res.json();
+    logInfo("Reset-password API response", data);
 
     if (!res.ok) {
+  logError("Password reset failed", {
+    userId,
+    message: data.message
+  });
       setErrorMsg(data.message || "Failed to reset password");
       return;
     }
 
+    logSuccess("Password reset successful", { userId });
     alert("Password updated successfully. Please login.");
     onClose(); // close modal
 
-  } catch {
+  } catch (err) {
+  logError("Reset-password API error", { userId, err });
     setErrorMsg("Server error. Please try again.");
   }
 };
 
 
 const handleVerifyAnswer = async () => {
+  logInfo("Security answer verification started", { userId });
   setErrorMsg("");
 
   try {
+    logInfo("Calling verify-answer API", { userId });
     const res = await fetch(
-      "http://40.80.79.26:5001/api/forgot-password/verify-answer",
+      "https://mobile.coastal.bank.in:5001/api/forgot-password/verify-answer",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -224,16 +299,23 @@ const handleVerifyAnswer = async () => {
     );
 
     const data = await res.json();
+    logInfo("Verify-answer API response", data);
 
     if (!res.ok) {
+  logWarn("Security answer incorrect", {
+    userId,
+    message: data.message
+  });
       setErrorMsg(data.message || "Invalid security answer");
       return;
     }
 
+    logSuccess("Security answer verified", { userId });
     // ✅ Only now allow password reset
     setStep(3);
 
-  } catch {
+  } catch (err) {
+  logError("Verify-answer API error", { userId, err });
     setErrorMsg("Server error. Please try again.");
   }
 };

@@ -16,6 +16,7 @@ const [selectAllAllPages, setSelectAllAllPages] = useState(false);
 
 const [showMapModal, setShowMapModal] = useState(false);
 const [selectedLocation, setSelectedLocation] = useState("");
+const [isEditing, setIsEditing] = useState(false);
 
 const [formData, setFormData] = useState({
   branchCode: "",
@@ -31,7 +32,7 @@ const [formData, setFormData] = useState({
 
 const handleSearch = async () => {
   const response = await fetch(
-    `http://40.80.79.26:5001/api/branch-master?name=${filterName}&code=${filterCode}`
+    `https://mobile.coastal.bank.in:5001/api/branch-master?name=${filterName}&code=${filterCode}`
   );
 
   const data = await response.json();
@@ -43,23 +44,20 @@ const handleReset = async () => {
   setFilterName("");
   setFilterCode("");
 
-  const response = await fetch("http://40.80.79.26:5001/api/branch-master")
+  const response = await fetch("https://mobile.coastal.bank.in:5001/api/branch-master")
   const data = await response.json();
   setBranches(Array.isArray(data) ? data : []);
   setCurrentPage(1);
 };
 
 const handleSave = async () => {
-  const isEdit = branches.some(
-    b => b.branchCode === formData.branchCode
-  );
+  const method = isEditing ? "PUT" : "POST";
 
-  const method = isEdit ? "PUT" : "POST";
-  const url = isEdit
-    ? `http://40.80.79.26:5001/api/branch-master/${formData.branchCode}`
-    : "http://40.80.79.26:5001/api/branch-master";
+  const url = isEditing
+    ? `https://mobile.coastal.bank.in:5001/api/branch-master/${formData.branchCode}`
+    : "https://mobile.coastal.bank.in:5001/api/branch-master";
 
-  await fetch(url, {
+  const res = await fetch(url, {
     method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -76,8 +74,13 @@ const handleSave = async () => {
     })
   });
 
-  await handleReset();   // reload sorted data
+  const data = await res.json();
+
+  alert(data.message);
+
+  await handleReset();
   setShowForm(false);
+  setIsEditing(false);
 };
 
 const handleDelete = async () => {
@@ -90,7 +93,7 @@ const handleDelete = async () => {
   if (!confirmed) return;
 
   for (let code of selectedRows) {
-    await fetch(`http://40.80.79.26:5001/api/branch-master/${code}`, {
+    await fetch(`https://mobile.coastal.bank.in:5001/api/branch-master/${code}`, {
       method: "DELETE"
     });
   }
@@ -181,7 +184,8 @@ const handleRowSelect = (branchCode) => {
       pincode: "",
       locationLink: "" 
     });
-    setShowForm(true);
+    setIsEditing(false);
+setShowForm(true);
   }}
   className="px-4 py-2 bg-blue-600 text-white text-sm rounded"
 >
@@ -193,6 +197,18 @@ const handleRowSelect = (branchCode) => {
   className="px-4 py-2 bg-blue-600 text-white text-sm rounded"
 >
   Reset
+</button>
+
+<button
+  onClick={handleDelete}
+  disabled={selectedRows.length === 0}
+  className={`px-4 py-2 text-sm rounded text-white ${
+    selectedRows.length > 0
+      ? "bg-red-500"
+      : "bg-gray-400 cursor-not-allowed"
+  }`}
+>
+  Delete
 </button>
 
         <span className="ml-auto text-red-600 text-sm font-medium">
@@ -211,11 +227,15 @@ const handleRowSelect = (branchCode) => {
           Branch Code *
         </label>
         <input
-  className="mt-1 w-full border rounded px-3 py-2"
+  className={`mt-1 w-full border rounded px-3 py-2 ${
+    isEditing ? "bg-gray-200 cursor-not-allowed" : ""
+  }`}
   value={formData.branchCode}
   onChange={(e) =>
+    !isEditing &&
     setFormData({ ...formData, branchCode: e.target.value })
   }
+  disabled={isEditing}
 />
       </div>
 
@@ -358,18 +378,6 @@ const handleRowSelect = (branchCode) => {
 </button>
 
       <button
-  onClick={handleDelete}
-  disabled={selectedRows.length === 0}
-  className={`px-5 py-2 rounded text-white ${
-  selectedRows.length > 0
-    ? "bg-red-500"
-    : "bg-gray-400 cursor-not-allowed"
-}`}
->
-  Delete
-</button>
-
-      <button
         onClick={() => setShowForm(false)}
         className="text-blue-600"
       >
@@ -443,7 +451,8 @@ const handleRowSelect = (branchCode) => {
       pincode: b.pincode,
       locationLink: b.location
     });
-    setShowForm(true);
+    setIsEditing(true);
+setShowForm(true);
   }}
 >
         

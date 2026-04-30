@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 
-const BASE_URL = "http://40.80.79.26:5001";
+const BASE_URL = "https://mobile.coastal.bank.in:5001";
 
 const RECORDS_PER_PAGE = 15;
+const hiddenRoleIds = [7, 8, 9, 10];
 
 const Role = () => {
   const [roles, setRoles] = useState([]);
@@ -36,7 +37,12 @@ const Role = () => {
   const data = await res.json();
 
   setRoles(data.records);
-  setTotalRecords(data.total);
+  const filteredRoles = data.records.filter(
+  (r) => !hiddenRoleIds.includes(r.RoleId)
+);
+
+setRoles(data.records); // keep original (important)
+setTotalRecords(filteredRoles.length);
 }, [filterName, currentPage]);
 
   useEffect(() => {
@@ -102,7 +108,9 @@ const Role = () => {
     }
 
     setSelectAllCurrentPage(
-      roles.every((r) => updated.includes(r.RoleId))
+      roles
+  .filter((r) => !hiddenRoleIds.includes(r.RoleId))
+  .every((r) => updated.includes(r.RoleId))
     );
 
     return updated;
@@ -246,7 +254,9 @@ const Role = () => {
           setSelectAllAllPages(false);
 
           if (checked) {
-            const pageIds = roles.map(r => r.RoleId);
+            const pageIds = roles
+  .filter((r) => !hiddenRoleIds.includes(r.RoleId))
+  .map(r => r.RoleId);
             setSelectedIds(pageIds);
           } else {
             setSelectedIds([]);
@@ -271,7 +281,9 @@ const Role = () => {
               </td>
             </tr>
           ) : (
-            roles.map((r, index) => (
+            roles
+  .filter((r) => !hiddenRoleIds.includes(r.RoleId))
+  .map((r, index) => (
               <tr
   key={r.RoleId}
   className="hover:bg-slate-100 cursor-pointer"
@@ -291,13 +303,14 @@ const Role = () => {
   <input
     type="checkbox"
     checked={selectedIds.includes(r.RoleId)}
+    onClick={(e) => e.stopPropagation()}   // ✅ ADD THIS
     onChange={() => toggleCheckbox(r.RoleId)}
   />
 </td>
 
   {/* Serial Number Second */}
   <td className="border p-2 text-center">
-    {(currentPage - 1) * RECORDS_PER_PAGE + index + 1}
+    {index + 1}
   </td>
 
   <td className="border p-2">{r.RoleName}</td>

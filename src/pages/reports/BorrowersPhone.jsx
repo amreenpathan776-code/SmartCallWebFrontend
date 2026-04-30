@@ -1,9 +1,31 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 
-const BASE_URL = "http://40.80.79.26:5001";
+// ================= LOGGER =================
+const getUserId = () => localStorage.getItem("userId") || "Unknown";
+
+const logInfo = (msg, data) =>
+  console.log(`📡 [User:${getUserId()}] ${msg}`, data || "");
+
+const logSuccess = (msg, data) =>
+  console.log(`✅ [User:${getUserId()}] ${msg}`, data || "");
+
+const logError = (msg, data) =>
+  console.error(`❌ [User:${getUserId()}] ${msg}`, data || "");
+
+const logWarn = (msg, data) =>
+  console.warn(`⚠️ [User:${getUserId()}] ${msg}`, data || "");
+
+const BASE_URL = "https://mobile.coastal.bank.in:5001";
 
 const BorrowersContactedByPhone = () => {
+
+  useEffect(() => {
+  logInfo("BORROWERS CONTACTED PAGE LOADED", {
+    role: localStorage.getItem("role"),
+    userId: localStorage.getItem("userId")
+  });
+}, []);
 
   const [currentPage, setCurrentPage] = useState(1);
 const recordsPerPage = 15;
@@ -26,6 +48,44 @@ const recordsPerPage = 15;
 const [selectAllPage, setSelectAllPage] = useState(false);
 const [selectAllAllPages, setSelectAllAllPages] = useState(false);
 
+const role = localStorage.getItem("role");
+const userBranch = localStorage.getItem("branchName");
+const userCluster = localStorage.getItem("clusterName");
+
+const isBranchManager = role === "Branch Manager";
+const isRegionalManager = role?.startsWith("Regional Manager");
+
+let rmCluster = "";
+
+if (isRegionalManager) {
+  const match = role.match(/\((.*?)\)/);
+  rmCluster = match ? match[1] : "";
+}
+
+useEffect(() => {
+
+  logInfo("RM Effect Triggered", { isRegionalManager, rmCluster });
+
+  if (isRegionalManager && rmCluster) {
+logInfo("Regional Manager flow triggered", rmCluster);
+    setSelectedCluster(rmCluster);
+
+    logInfo("Fetching branches for RM", rmCluster);
+    axios
+      .get(`${BASE_URL}/api/branches/${rmCluster}`)
+      .then(res => {
+  logSuccess("RM Branches fetched", res.data);
+  setBranches(res.data || []);
+})
+      .catch(err => {
+  logError("RM Branch fetch error", err);
+  setBranches([]);
+});
+
+  }
+
+}, [isRegionalManager, rmCluster]);
+
 const [showExportModal, setShowExportModal] = useState(false);
 const [exportFileName, setExportFileName] = useState("Borrowers_Contacted_Report");
 
@@ -44,11 +104,15 @@ const [selectedColumns, setSelectedColumns] = useState([
 
   // ================= LOAD CLUSTERS =================
   const fetchClusters = useCallback(async () => {
+
+    logInfo("Fetching clusters API started");
+
     try {
       const res = await axios.get(`${BASE_URL}/api/clusters`);
+      logSuccess("Clusters fetched", res.data);
       setClusters(["Corporate Office", ...res.data.map(c => c.cluster_name)]);
     } catch (error) {
-      console.error("Error fetching clusters:", error);
+      logError("Clusters fetch error", error);
     }
   }, []);
 
@@ -60,44 +124,134 @@ const [selectedColumns, setSelectedColumns] = useState([
 
   const loadUsersAndBranches = async () => {
 
+    logInfo("Loading users & branches", {
+  selectedCluster,
+  selectedBranch,
+  isBranchManager,
+  isRegionalManager
+});
+
+    // 🔒 If Branch Manager → force load only his branch
+// 🔒 If Branch Manager → force load only his branch and users
+if (isBranchManager && userCluster && userBranch) {
+
+  logInfo("Branch Manager flow triggered", {
+  userCluster,
+  userBranch
+});
+  try {
+    // Load branches for cluster
+    const branchesRes = await axios.get(
+      `${BASE_URL}/api/branches/${userCluster}`
+    );
+
+    setBranches(branchesRes.data || []);
+    setSelectedCluster(userCluster);
+    setSelectedBranch(userBranch);
+
+    // ✅ LOAD USERS FOR THAT BRANCH
+    const usersRes = await axios.post(
+      `${BASE_URL}/api/users/list`,
+      {
+  page: 1,
+  pageSize: 1000,
+  cluster: userCluster,
+  branch: userBranch,
+  name: "",
+  status: "Active"   // ✅ ADD
+},
+      {
+        headers: {
+          "x-user-id": localStorage.getItem("userId")
+        }
+      }
+    );
+
+    const filteredUsers = (usersRes.data.records || []).filter(
+  (u) => u.branchName !== "Corporate Office"
+);
+
+setUsers(filteredUsers);
+logSuccess("Branch Manager Users Loaded", filteredUsers);
+  } catch (err) {
+    logError("Branch Manager load error", err);
+  }
+
+  return;
+}
+
     // ✅ NOTHING SELECTED → Load ALL
-    if (!selectedCluster && !selectedBranch) {
+    // 🔒 REGIONAL MANAGER → load only his cluster users
+if (isRegionalManager && rmCluster) {
 
-      const branchesRes = await axios.get(`${BASE_URL}/api/branches/all`);
-      setBranches(branchesRes.data || []);
+  const branchesRes = await axios.get(
+    `${BASE_URL}/api/branches/${rmCluster}`
+  );
+  setBranches(branchesRes.data || []);
 
-      const usersRes = await axios.post(`${BASE_URL}/api/users/list`, {
-        page: 1,
-        pageSize: 1000,
-        cluster: "",
-        branch: "",
-        name: ""
-      });
-
-      setUsers(usersRes.data.records || []);
-      return;
+  const usersRes = await axios.post(
+    `${BASE_URL}/api/users/list`,
+    {
+  page: 1,
+  pageSize: 1000,
+  cluster: rmCluster,
+  branch: selectedBranch || "",
+  name: "",
+  status: "Active"   // ✅ ADD
+},
+    {
+      headers: {
+        "x-user-id": localStorage.getItem("userId")
+      }
     }
+  );
+
+  const filteredUsers = (usersRes.data.records || []).filter(
+  (u) => u.branchName !== "Corporate Office"
+);
+
+setUsers(filteredUsers);
+logSuccess("Regional Manager Users Loaded", filteredUsers);
+  return;
+}
 
     // ✅ CORPORATE OFFICE → Load ALL
     if (selectedCluster === "Corporate Office") {
+      logInfo("Corporate Office flow triggered");
 
-      const branchesRes = await axios.get(`${BASE_URL}/api/branches/all`);
-      setBranches(branchesRes.data || []);
+  // ✅ LOAD ALL BRANCHES (COMMON API)
+  const branchesRes = await axios.get(`${BASE_URL}/api/branches`);
+  setBranches(branchesRes.data || []);
 
-      const usersRes = await axios.post(`${BASE_URL}/api/users/list`, {
-        page: 1,
-        pageSize: 1000,
-        cluster: "",
-        branch: "",
-        name: ""
-      });
-
-      setUsers(usersRes.data.records || []);
-      return;
+  // ✅ LOAD ALL USERS
+  const usersRes = await axios.post(
+    `${BASE_URL}/api/users/list`,
+    {
+      page: 1,
+      pageSize: 1000,
+      cluster: "",
+      branch: "",
+      name: "",
+      status: "Active"
+    },
+    {
+      headers: {
+        "x-user-id": localStorage.getItem("userId")
+      }
     }
+  );
+
+  const filteredUsers = (usersRes.data.records || []).filter(
+  (u) => u.branchName !== "Corporate Office"
+);
+
+setUsers(filteredUsers);
+  return;
+}
 
     // ✅ CLUSTER ONLY SELECTED
     if (selectedCluster && !selectedBranch) {
+      logInfo("Cluster selected", selectedCluster);
 
       const branchesRes = await axios.get(
         `${BASE_URL}/api/branches/${selectedCluster}`
@@ -105,29 +259,43 @@ const [selectedColumns, setSelectedColumns] = useState([
       setBranches(branchesRes.data || []);
 
       const usersRes = await axios.post(`${BASE_URL}/api/users/list`, {
-        page: 1,
-        pageSize: 1000,
-        cluster: selectedCluster,
-        branch: "",
-        name: ""
+  page: 1,
+  pageSize: 1000,
+  cluster: selectedCluster,
+  branch: "",
+  name: "",
+  status: "Active"   // ✅ ADD
       });
 
-      setUsers(usersRes.data.records || []);
+      const filteredUsers = (usersRes.data.records || []).filter(
+  (u) => u.branchName !== "Corporate Office"
+);
+
+setUsers(filteredUsers);
       return;
     }
 
     // ✅ CLUSTER + BRANCH SELECTED
     if (selectedCluster && selectedBranch) {
+      logInfo("Cluster + Branch selected", {
+  selectedCluster,
+  selectedBranch
+});
 
       const usersRes = await axios.post(`${BASE_URL}/api/users/list`, {
-        page: 1,
-        pageSize: 1000,
-        cluster: selectedCluster,
-        branch: selectedBranch,
-        name: ""
+  page: 1,
+  pageSize: 1000,
+  cluster: selectedCluster,
+  branch: selectedBranch,
+  name: "",
+  status: "Active"   // ✅ ADD
       });
 
-      setUsers(usersRes.data.records || []);
+      const filteredUsers = (usersRes.data.records || []).filter(
+  (u) => u.branchName !== "Corporate Office"
+);
+
+setUsers(filteredUsers);
       return;
     }
   };
@@ -136,10 +304,26 @@ const [selectedColumns, setSelectedColumns] = useState([
 
   setSelectedUser("");
 
-}, [selectedCluster, selectedBranch]);
+}, [
+  selectedCluster,
+  selectedBranch,
+  isBranchManager,
+  isRegionalManager,
+  rmCluster,
+  userCluster,
+  userBranch
+]);
 
   // ================= SEARCH =================
   const handleSearch = async () => {
+
+    logInfo("BORROWERS SEARCH STARTED", {
+  selectedCluster,
+  selectedBranch,
+  selectedUser,
+  fromDate,
+  toDate
+});
 
   const hasAnyFilter = [
     selectedCluster,
@@ -150,13 +334,16 @@ const [selectedColumns, setSelectedColumns] = useState([
   ].some(v => v && v.trim() !== "");
 
   if (!hasAnyFilter) {
-    alert("Please select at least one filter before searching");
-    return;  // ❌ stop API call
-  }
+  logWarn("Search blocked - no filters");
+  alert("Please select at least one filter before searching");
+  return;
+}
 
   setLoading(true);
 
   try {
+
+    logInfo("Calling Borrowers Search API");
     const res = await axios.post(
       `${BASE_URL}/api/borrowers-contacted/search`,
       {
@@ -165,6 +352,11 @@ const [selectedColumns, setSelectedColumns] = useState([
         userId: selectedUser,
         fromDate,
         toDate
+      },
+      {
+        headers: {
+          "x-user-id": localStorage.getItem("userId")
+        }
       }
     );
 
@@ -173,26 +365,53 @@ const [selectedColumns, setSelectedColumns] = useState([
     setSelectedRows([]);
     setSelectAllPage(false);
     setSelectAllAllPages(false);
+    logSuccess("BORROWERS SEARCH SUCCESS", {
+  count: res.data?.length || 0
+});
 
   } catch (error) {
-    console.error("Search error:", error);
-  }
+  logError("BORROWERS SEARCH FAILED", error);
+}
 
   setLoading(false);
 };
 
   // ================= RESET =================
   const handleReset = () => {
+
+    logWarn("FILTER RESET TRIGGERED");
+
+  if (isBranchManager) {
+
+    if (userCluster) setSelectedCluster(userCluster);
+    if (userBranch) setSelectedBranch(userBranch);
+
+  }
+  else if (isRegionalManager) {
+
+    setSelectedCluster(rmCluster);
+    setSelectedBranch("");
+
+  }
+  else {
+
     setSelectedCluster("");
     setSelectedBranch("");
-    setSelectedUser("");
-    setFromDate("");
-    setToDate("");
-    setBranches([]);
-    setUsers([]);
-    setTableData([]);
-    setCurrentPage(1);
-  };
+
+  }
+
+  setSelectedUser("");
+  setFromDate("");
+  setToDate("");
+
+  setTableData([]);
+  setCurrentPage(1);
+
+  setSelectedRows([]);
+  setSelectAllPage(false);
+  setSelectAllAllPages(false);
+  logSuccess("RESET COMPLETED");
+};
 
 
   const totalPages = Math.max(
@@ -200,9 +419,13 @@ const [selectedColumns, setSelectedColumns] = useState([
   Math.ceil(tableData.length / recordsPerPage)
 );
 
-  const indexOfLastRecord = currentPage * recordsPerPage;
-  const indexOfFirstRecord = indexOfLastRecord - recordsPerPage;
-  const currentRecords = tableData.slice(indexOfFirstRecord, indexOfLastRecord);
+const indexOfLastRecord = currentPage * recordsPerPage;
+const indexOfFirstRecord = indexOfLastRecord - recordsPerPage;
+
+const currentRecords = tableData.slice(indexOfFirstRecord, indexOfLastRecord);
+
+const firstRecord = tableData.length === 0 ? 0 : indexOfFirstRecord + 1;
+const lastRecord = Math.min(indexOfLastRecord, tableData.length);
 
 useEffect(() => {
   const pageIndexes = tableData
@@ -223,40 +446,67 @@ useEffect(() => {
 ]);
 
 const handleExportPDF = async () => {
-  if (selectedRows.length === 0) {
-    alert("No records selected");
-    return;
-  }
+
+  logInfo("EXPORT PDF STARTED", {
+  selectedRows,
+  selectedColumns,
+  exportFileName
+});
 
   if (selectedColumns.length === 0) {
-    alert("Please select at least one column");
-    return;
-  }
+  logWarn("PDF Export blocked - no columns selected");
+  alert("Please select at least one column");
+  return;
+}
 
   try {
+
+    const indexesToExport =
+      selectedRows.length === 0
+        ? tableData.map((_, i) => i) // export ALL
+        : selectedRows;              // export selected
+
+        logInfo("Calling PDF Export API");
     const response = await axios.post(
       `${BASE_URL}/api/borrowers-contacted/export-pdf`,
       {
-        selectedIndexes: selectedRows,
+        selectedIndexes: indexesToExport,
         columns: selectedColumns,
         fileName: exportFileName,
         fullData: tableData
       },
-      { responseType: "blob" }
+      {
+        headers: {
+          "x-user-id": localStorage.getItem("userId")
+        },
+        responseType: "blob"
+      }
     );
 
     const url = window.URL.createObjectURL(new Blob([response.data]));
+
     const link = document.createElement("a");
     link.href = url;
     link.download = `${exportFileName}.pdf`;
     link.click();
-
+logSuccess("PDF EXPORTED SUCCESSFULLY", {
+  fileName: exportFileName,
+  totalRows: selectedRows.length || tableData.length
+});
     setShowExportModal(false);
 
   } catch (err) {
-    alert("Failed to export PDF");
-  }
+  logError("PDF EXPORT FAILED", err);
+  alert("Failed to export PDF");
+}
 };
+
+useEffect(() => {
+  if (isBranchManager) {
+    if (userCluster) setSelectedCluster(userCluster);
+    if (userBranch) setSelectedBranch(userBranch);
+  }
+}, [isBranchManager, userCluster, userBranch]);
 
   // ================= UI =================
   return (
@@ -270,7 +520,10 @@ const handleExportPDF = async () => {
             <label className="text-sm text-slate-600">User</label>
             <select
               value={selectedUser}
-              onChange={(e) => setSelectedUser(e.target.value)}
+              onChange={(e) => {
+  logInfo("User changed", e.target.value);
+  setSelectedUser(e.target.value);
+}}
               className="w-full mt-1 px-3 py-2 bg-slate-100 border rounded"
             >
               <option value="">Select</option>
@@ -287,7 +540,10 @@ const handleExportPDF = async () => {
             <input
               type="date"
               value={fromDate}
-              onChange={(e) => setFromDate(e.target.value)}
+              onChange={(e) => {
+  logInfo("From Date changed", e.target.value);
+  setFromDate(e.target.value);
+}}
               className="w-full mt-1 px-3 py-2 bg-slate-100 border rounded"
             />
           </div>
@@ -297,7 +553,10 @@ const handleExportPDF = async () => {
             <input
               type="date"
               value={toDate}
-              onChange={(e) => setToDate(e.target.value)}
+              onChange={(e) => {
+  logInfo("To Date changed", e.target.value);
+  setToDate(e.target.value);
+}}
               className="w-full mt-1 px-3 py-2 bg-slate-100 border rounded"
             />
           </div>
@@ -305,14 +564,21 @@ const handleExportPDF = async () => {
           <div>
             <label className="text-sm text-slate-600">Cluster</label>
             <select
-              value={selectedCluster}
-              onChange={(e) => {
-                setSelectedCluster(e.target.value);
-                setSelectedBranch("");
-                setSelectedUser("");
-              }}
-              className="w-full mt-1 px-3 py-2 bg-slate-100 border rounded"
-            >
+  value={selectedCluster}
+  disabled={isBranchManager || isRegionalManager}
+  onChange={(e) => {
+  logInfo("Cluster changed (UI)", e.target.value);
+  setSelectedCluster(e.target.value);
+    setSelectedBranch("");
+    setSelectedUser("");
+  }}
+  className={`w-full mt-1 px-3 py-2 border rounded
+  ${
+    isBranchManager || isRegionalManager
+      ? "bg-slate-300 text-black font-semibold border-slate-400 cursor-not-allowed"
+      : "bg-slate-100"
+  }`}
+>
               <option value="">Select</option>
               {clusters.map((cluster, index) => (
                 <option key={index} value={cluster}>
@@ -325,13 +591,20 @@ const handleExportPDF = async () => {
           <div>
             <label className="text-sm text-slate-600">Branch</label>
             <select
-              value={selectedBranch}
-              onChange={(e) => {
-                setSelectedBranch(e.target.value);
-                setSelectedUser("");
-              }}
-              className="w-full mt-1 px-3 py-2 bg-slate-100 border rounded"
-            >
+  value={selectedBranch}
+  disabled={!selectedCluster || isBranchManager}
+  onChange={(e) => {
+  logInfo("Branch changed (UI)", e.target.value);
+  setSelectedBranch(e.target.value);
+    setSelectedUser("");
+  }}
+  className={`w-full mt-1 px-3 py-2 border rounded
+  ${
+    isBranchManager
+      ? "bg-slate-300 text-black font-semibold border-slate-400 cursor-not-allowed"
+      : "bg-slate-100"
+  }`}
+>
               <option value="">Select</option>
               {branches.map((branch) => (
                 <option key={branch.branch_code} value={branch.branch_name}>
@@ -359,14 +632,9 @@ const handleExportPDF = async () => {
           </button>
 
           <button
-  onClick={() => {
-    if (selectedRows.length === 0) {
-      alert("Please select at least one record");
-      return;
-    }
-    setShowExportModal(true);
-  }}
-  className="px-6 py-2 bg-blue-600 text-white rounded"
+  onClick={() => setShowExportModal(true)}
+  disabled={tableData.length === 0}
+  className="px-6 py-2 bg-blue-600 text-white rounded disabled:opacity-40"
 >
   Export Data
 </button>
@@ -398,7 +666,12 @@ const handleExportPDF = async () => {
       {/* ================= SELECT ALL RECORDS ================= */}
       <div className="bg-white rounded-xl border mt-6 flex flex-col flex-1 overflow-hidden">
 
-        <div className="flex-1 overflow-x-auto overflow-y-auto relative">
+  {/* Record Count */}
+  <div className="text-center py-3 font-semibold border-b">
+    No. Of Records: {tableData.length}
+  </div>
+
+  <div className="flex-1 overflow-x-auto overflow-y-auto relative">
 
           {loading && (
             <div className="absolute inset-0 bg-white/70 flex items-center justify-center text-lg font-semibold z-50">
@@ -508,53 +781,49 @@ const handleExportPDF = async () => {
 
 
 {/* ================= PAGINATION ================= */}
-        {tableData.length > 0 && (
-  <div className="flex justify-between items-center px-6 py-3 border-t bg-slate-50">
+{tableData.length > 0 && (
+  <div className="flex items-center justify-between px-6 py-3 border-t bg-slate-50 text-sm text-slate-600">
 
-    <span className="text-sm text-slate-600">
-      Showing {indexOfFirstRecord + 1} –
-      {Math.min(indexOfLastRecord, tableData.length)} of {tableData.length}
-    </span>
+    {/* Showing Records */}
+    <div>
+      Showing {firstRecord}-{lastRecord} of {tableData.length}
+    </div>
 
-    <div className="flex gap-2">
+    {/* Controls */}
+    <div className="flex items-center gap-2">
 
-      {/* First */}
       <button
         disabled={currentPage === 1}
         onClick={() => setCurrentPage(1)}
-        className="px-3 py-1 border rounded disabled:opacity-40"
+        className="px-2 py-1 border rounded disabled:opacity-50"
       >
         ⏮
       </button>
 
-      {/* Previous */}
       <button
         disabled={currentPage === 1}
         onClick={() => setCurrentPage(p => p - 1)}
-        className="px-3 py-1 border rounded disabled:opacity-40"
+        className="px-2 py-1 border rounded disabled:opacity-50"
       >
         ◀
       </button>
 
-      {/* Page Info */}
-      <span className="px-3 py-1 text-sm">
+      <span>
         Page {currentPage} of {totalPages}
       </span>
 
-      {/* Next */}
       <button
         disabled={currentPage === totalPages}
         onClick={() => setCurrentPage(p => p + 1)}
-        className="px-3 py-1 border rounded disabled:opacity-40"
+        className="px-2 py-1 border rounded disabled:opacity-50"
       >
         ▶
       </button>
 
-      {/* Last */}
       <button
         disabled={currentPage === totalPages}
         onClick={() => setCurrentPage(totalPages)}
-        className="px-3 py-1 border rounded disabled:opacity-40"
+        className="px-2 py-1 border rounded disabled:opacity-50"
       >
         ⏭
       </button>

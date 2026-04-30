@@ -1,5 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 
+// ✅ Logger
+const getUserId = () => localStorage.getItem("userId") || "Unknown";
+
+const logInfo = (msg, data) =>
+  console.log(`📡 [User:${getUserId()}] ${msg}`, data || "");
+
+const logSuccess = (msg, data) =>
+  console.log(`✅ [User:${getUserId()}] ${msg}`, data || "");
+
+const logError = (msg, data) =>
+  console.error(`❌ [User:${getUserId()}] ${msg}`, data || "");
+
+const logWarn = (msg, data) =>
+  console.warn(`⚠️ [User:${getUserId()}] ${msg}`, data || "");
 const RECORDS_PER_PAGE = 15;
 
 const ActivitySummary = () => {
@@ -34,8 +48,69 @@ const EXPORT_COLUMNS = [
   const [currentPage, setCurrentPage] = useState(1);
 
   const [selectedRows, setSelectedRows] = useState([]);
+
+// ✅ ADD HERE
+const role = localStorage.getItem("role");
+
+useEffect(() => {
+  logInfo("ACTIVITY SUMMARY PAGE LOADED", {
+    role,
+    userId: localStorage.getItem("userId")
+  });
+}, [role]);
+
+useEffect(() => {
+  logInfo("Initial state", {
+    cluster,
+    branch,
+    user,
+    fromDate,
+    toDate
+  });
+}, [cluster, branch, user, fromDate, toDate]);
+
 const [selectAllPage, setSelectAllPage] = useState(false);
 const [selectAllAllPages, setSelectAllAllPages] = useState(false);
+
+const isBranchManager = role === "Branch Manager";
+const isRegionalManager = role?.startsWith("Regional Manager");
+
+let userCluster = "";
+
+if (isRegionalManager) {
+
+  const match = role.match(/\((.*?)\)/);
+  userCluster = match ? match[1] : "";
+
+}
+
+useEffect(() => {
+logInfo("Regional Manager effect triggered", { isRegionalManager, userCluster });
+logInfo("RM effect started");
+  if (isRegionalManager) {
+
+    setCluster(userCluster);
+
+logInfo("Fetching branches for regional manager", userCluster);
+    fetch(`https://mobile.coastal.bank.in:5001/api/branches/${encodeURIComponent(userCluster)}`)
+      .then(res => {
+  if (!res.ok) {
+    logError("API failed", res.status);
+    throw new Error("API failed");
+  }
+  return res.json();
+})
+      .then(data => {
+  logSuccess("Branches fetched", data);
+  setBranches(data);
+})
+      .catch(err => {
+  logError("Branch fetch error", err);
+  setBranches([]);
+});
+logSuccess("RM effect completed");
+  }
+}, [isRegionalManager, userCluster]);
 
   const totalPages = Math.max(
   1,
@@ -45,7 +120,14 @@ const [selectAllAllPages, setSelectAllAllPages] = useState(false);
   const startIndex = (currentPage - 1) * RECORDS_PER_PAGE;
   const endIndex = startIndex + RECORDS_PER_PAGE;
 
-  const paginatedData = tableData.slice(startIndex, endIndex);
+  const paginatedData = useMemo(() => {
+  return Array.isArray(tableData)
+    ? tableData.slice(startIndex, endIndex)
+    : [];
+}, [tableData, startIndex, endIndex]);
+
+const indexOfFirstRecord = startIndex + 1;
+const indexOfLastRecord = Math.min(endIndex, tableData.length);
   
   const [showExport, setShowExport] = useState(false);
   const [fileName, setFileName] = useState("Activity_Summary_Report");
@@ -65,91 +147,258 @@ useEffect(() => {
 
   // ================= LOAD CLUSTERS =================
   useEffect(() => {
-  fetch("http://40.80.79.26:5001/api/clusters")
-    .then(res => res.json())
+    const startTime = Date.now();
+logInfo("Fetching clusters API started");
+  fetch("https://mobile.coastal.bank.in:5001/api/clusters")
+    .then(res => {
+  if (!res.ok) {
+    logError("API failed", res.status);
+    throw new Error("API failed");
+  }
+  return res.json();
+})
     .then(data => {
-      setClusters([
-        { cluster_name: "Corporate Office" },
-        ...data
-      ]);
-    })
-    .catch(err => console.error("Cluster fetch error:", err));
+  logInfo("Clusters API response time (ms)", Date.now() - startTime);
+  logSuccess("Clusters fetched", data);
+  setClusters([
+    { cluster_name: "Corporate Office" },
+    ...data
+  ]);
+})
+.catch(err => {
+  logError("CLUSTER FETCH ERROR", {
+    error: err.message,
+    stack: err.stack
+  });
+});
 }, []);
 
   useEffect(() => {
+    logInfo("Cluster changed (triggering data reload)", cluster);
   if (!cluster) {
-    setBranches([]);
-    setUsers([]);
-    setBranch("");
-    setUser("");
-    return;
-  }
+  logWarn("Cluster empty - skipping API calls");
+  return;
+}
 
   // ✅ If Corporate Office → load ALL users
-  if (cluster === "Corporate Office") {
-    fetch("http://40.80.79.26:5001/api/assignUsers", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({})   // ← empty body = all users
-    })
-      .then(res => res.json())
-      .then(setUsers);
+  if (cluster === "Corporate Office" && !isBranchManager) {
 
-    setBranches([]);
-    setBranch("");
-    setUser("");
-    return;
+logInfo("Fetching ALL branches");
+  // ✅ LOAD ALL BRANCHES
+  fetch("https://mobile.coastal.bank.in:5001/api/branches")
+    .then(res => {
+  if (!res.ok) {
+    logError("API failed", res.status);
+    throw new Error("API failed");
   }
+  return res.json();
+})
+    .then(data => {
+  logSuccess("Branches fetched (Corporate Office)", data);
+  setBranches(data);
+})
+    .catch(err => {
+  logError("Corporate branch fetch error", err);
+  setBranches([]);
+});
 
-  // 🔹 Normal Cluster Flow
-  fetch(`http://40.80.79.26:5001/api/branches/${encodeURIComponent(cluster)}`)
-    .then(res => res.json())
-    .then(setBranches);
-
-  fetch("http://40.80.79.26:5001/api/assignUsers", {
+    logInfo("Fetching ALL users");
+  // ✅ LOAD ALL USERS
+  fetch("https://mobile.coastal.bank.in:5001/api/assignUsers/v2", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ cluster })
+    headers: {
+      "Content-Type": "application/json",
+      "x-user-id": localStorage.getItem("userId")
+    },
+    body: JSON.stringify({})
   })
-    .then(res => res.json())
-    .then(setUsers);
+    .then(res => {
+  if (!res.ok) {
+    logError("AssignUsers API failed", res.status);
+    throw new Error("Unauthorized");
+  }
+  return res.json();
+})
+    .then(data => {
+  logSuccess("Users fetched", data);
+  setUsers(Array.isArray(data) ? data : []);
+})
+    .catch(err => {
+  logError("Users fetch error", {
+  error: err.message,
+  stack: err.stack
+});
+  setUsers([]);
+});
 
   setBranch("");
   setUser("");
-}, [cluster]);
+  return;
+}
+
+logInfo("Fetching branches for cluster", cluster);
+  // 🔹 Normal Cluster Flow
+  fetch(`https://mobile.coastal.bank.in:5001/api/branches/${encodeURIComponent(cluster)}`)
+  .then(res => {
+  if (!res.ok) {
+    logError("API failed", res.status);
+    throw new Error("API failed");
+  }
+  return res.json();
+})
+  .then(data => {
+  logSuccess("Branches fetched", data);
+  setBranches(data);
+
+  if (isBranchManager) {
+    const userBranch = localStorage.getItem("branchName");
+    if (userBranch) setBranch(userBranch);
+  }
+})
+.catch(err => {
+  logError("Cluster branch fetch error", err);
+  setBranches([]);
+});
+
+  const userApiStart = Date.now();
+logInfo("Fetching users API started", { cluster });
+  fetch("https://mobile.coastal.bank.in:5001/api/assignUsers/v2", {
+    method: "POST",
+    headers: {
+  "Content-Type": "application/json",
+  "x-user-id": localStorage.getItem("userId")
+},
+    body: JSON.stringify({ cluster })
+  })
+    .then(res => {
+  if (!res.ok) {
+    logError("AssignUsers API failed", res.status);
+    throw new Error("Unauthorized");
+  }
+  return res.json();
+})
+.then(data => {
+  logInfo("Users API response time (ms)", Date.now() - userApiStart);
+  logSuccess("Users fetched", data);
+  setUsers(Array.isArray(data) ? data : []);
+})
+.catch(err => {
+  logError("USERS FETCH ERROR", {
+    error: err.message,
+    stack: err.stack
+  });
+  setUsers([]);
+});
+
+}, [cluster, isBranchManager]);
 
 
 useEffect(() => {
-  // Load ALL users initially (Corporate Office behavior)
-  fetch("http://40.80.79.26:5001/api/assignUsers", {
+  logInfo("Fetching users with cluster & branch", { cluster, branch });
+
+  const branchToUse = isBranchManager
+    ? localStorage.getItem("branchName")
+    : branch || "";
+
+  const clusterToUse = isBranchManager
+    ? localStorage.getItem("clusterName")
+    : isRegionalManager
+    ? userCluster
+    : cluster || "";
+
+  fetch("https://mobile.coastal.bank.in:5001/api/assignUsers/v2", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({})
+    headers: {
+      "Content-Type": "application/json",
+      "x-user-id": localStorage.getItem("userId")
+    },
+    body: JSON.stringify({
+      cluster: clusterToUse,
+      branchName: branchToUse
+    })
   })
-    .then(res => res.json())
-    .then(setUsers);
-}, []);
+    .then(res => {
+  if (!res.ok) {
+    logError("AssignUsers API failed", res.status);
+    throw new Error("Unauthorized");
+  }
+  return res.json();
+})
+
+    .then(data => {
+  logSuccess("Users fetched", data);
+  setUsers(Array.isArray(data) ? data : []);
+})
+    .catch(err => {
+  logError("USER FETCH ERROR", {
+    error: err.message,
+    stack: err.stack
+  });
+  setUsers([]);
+});
+
+}, [cluster, branch, isBranchManager, isRegionalManager, userCluster]);
 
   // ================= BRANCH CHANGE =================
   useEffect(() => {
+    logInfo("Branch changed", { branch, cluster });
   if (!branch || !cluster) return;
 
-  fetch("http://40.80.79.26:5001/api/assignUsers", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      cluster,
-      branchName: branch
-    })
-  })
-    .then(res => res.json())
-    .then(setUsers);
+  logInfo("Fetching users for branch", branch);
+  fetch("https://mobile.coastal.bank.in:5001/api/assignUsers/v2", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-user-id": localStorage.getItem("userId")
+  },
+  body: JSON.stringify({
+  cluster,
+  branchName: isBranchManager
+    ? localStorage.getItem("branchName")
+    : branch
+})
+})
+    .then(res => {
+  if (!res.ok) {
+    logError("AssignUsers API failed", res.status);
+    throw new Error("Unauthorized");
+  }
+  return res.json();
+})
+
+.then(data => {
+  logSuccess("Users fetched", data);
+  setUsers(Array.isArray(data) ? data : []);
+})
+.catch(err => {
+  logError("BRANCH USER FETCH ERROR", {
+  error: err.message,
+  stack: err.stack
+});
+  setUsers([]);
+});
 
   setUser("");
-}, [branch, cluster]);
+}, [branch, cluster, isBranchManager]);
+
+useEffect(() => {
+  if (isBranchManager) {
+    const userBranch = localStorage.getItem("branchName");
+    const userCluster = localStorage.getItem("clusterName");
+
+    if (userBranch) setBranch(userBranch);
+    if (userCluster) setCluster(userCluster);
+  }
+}, [isBranchManager]);
 
 
 const handleSearch = async () => {
+
+  const startTime = Date.now();
+logInfo("SEARCH STARTED", {
+  filters: { user, cluster, branch, fromDate, toDate }
+});
+
   const hasAnyFilter = [
     user,
     cluster,
@@ -160,8 +409,10 @@ const handleSearch = async () => {
 
   if (!hasAnyFilter) {
     alert("Please select at least one filter before searching");
+    logWarn("Search blocked - no filters");
     return;
   }
+  logSuccess("Search validation passed");
 
   const payload = {
     user,
@@ -170,80 +421,147 @@ const handleSearch = async () => {
     fromDate,
     toDate
   };
+  logInfo("Search payload", payload);
 
   setLoading(true);
   setCurrentPage(1);
 
   try {
-    const res = await fetch("http://40.80.79.26:5001/api/activity-summary", {
+    logInfo("API CALL STARTED → Activity Summary", payload);
+    const apiStart = Date.now();
+    const res = await fetch("https://mobile.coastal.bank.in:5001/api/activity-summary", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+  "Content-Type": "application/json",
+  "x-user-id": localStorage.getItem("userId")
+},
       body: JSON.stringify(payload)
     });
+logInfo("API response status", res.status);
 
     const data = await res.json();
-    setTableData(data);
+    logInfo("API response time (ms)", Date.now() - apiStart);
+    logSuccess("API RESPONSE RECEIVED", {
+  recordCount: Array.isArray(data) ? data.length : 0
+});
+
+if (Array.isArray(data)) {
+  setTableData(data);
+  logSuccess("Table data updated", {
+  rows: data.length
+});
+} else if (Array.isArray(data?.data)) {
+  setTableData(data.data);
+  logInfo("Table data set (nested)", data.data.length);
+} else {
+  setTableData([]);
+  logWarn("No valid data received, table cleared");
+}
+
     setSelectedRows([]);
     setSelectAllPage(false);
     setSelectAllAllPages(false);
 
   } catch (err) {
-    console.error("Search error:", err);
+    logError("SEARCH ERROR", {
+  error: err.message,
+  stack: err.stack
+});
   } finally {
-    setLoading(false);
-  }
+  const totalTime = Date.now() - startTime;
+
+logInfo("Search execution time (ms)", totalTime);
+
+logSuccess("SEARCH COMPLETED", {
+  totalTimeMs: totalTime
+});
+  setLoading(false);
+}
 };
 
 
 const handleReset = () => {
-  setCluster("");
-  setBranch("");
+
+  logInfo("RESET STARTED");
+
+  if (isBranchManager) {
+
+    const userBranch = localStorage.getItem("branchName");
+    const userCluster = localStorage.getItem("clusterName");
+
+    setCluster(userCluster || "");
+    setBranch(userBranch || "");
+
+  } else if (isRegionalManager) {
+
+    setCluster(userCluster);
+    setBranch("");
+
+  } else {
+
+    setCluster("");
+    setBranch("");
+
+  }
+
   setUser("");
   setFromDate("");
   setToDate("");
 
-  setBranches([]);
-  setUsers([]);
   setTableData([]);
   setCurrentPage(1);
   setSelectedRows([]);
   setSelectAllPage(false);
   setSelectAllAllPages(false);
+  logInfo("Reset state cleared");
+  logSuccess("Reset completed");
 
-
-  console.log("RESET CLICKED");
 };
 
 const handleBackendPDFExport = async () => {
 
-  if (selectedRows.length === 0) {
-    alert("Please select at least one record to export");
-    return;
-  }
+  const pdfStart = Date.now();
 
-  // Prepare selected rows data with S.No from frontend
-  const selectedData = selectedRows
-    .sort((a, b) => a - b) // ✅ keep order
-    .map(index => ({
-      SNo: index + 1,       // ✅ Frontend S.No
-      ...tableData[index]
-    }));
+logInfo("PDF EXPORT STARTED", {
+  selectedCount: selectedRows.length,
+  columns: selectedCols,
+  fileName
+});
+
+  // 🔹 If no rows selected → export ALL search results
+  const rowsToExport =
+    selectedRows.length === 0
+      ? tableData.map((row, i) => ({
+          SNo: i + 1,
+          ...row
+        }))
+      : selectedRows
+          .sort((a, b) => a - b)
+          .map(index => ({
+            SNo: index + 1,
+            ...tableData[index]
+          }));
 
   const payload = {
-    selectedData,          // ✅ send selected rows only
+    selectedData: rowsToExport,
     columns: selectedCols,
     fileName
   };
 
   try {
+    logInfo("Calling PDF export API", payload);
     const res = await fetch(
-      "http://40.80.79.26:5001/api/activity-summary/export-pdf",
+      "https://mobile.coastal.bank.in:5001/api/activity-summary/export-pdf",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": localStorage.getItem("userId")
+        },
         body: JSON.stringify(payload)
       }
     );
+    logInfo("PDF API response status", res.status);
 
     if (!res.ok) throw new Error("Failed to export PDF");
 
@@ -258,10 +576,17 @@ const handleBackendPDFExport = async () => {
 
     a.remove();
     window.URL.revokeObjectURL(url);
+    logSuccess("PDF GENERATED SUCCESSFULLY", {
+  timeMs: Date.now() - pdfStart
+});
     setShowExport(false);
 
   } catch (err) {
-    alert("Failed to export PDF");
+    logError("PDF EXPORT ERROR", {
+  error: err.message,
+  stack: err.stack
+});
+alert("Failed to export PDF");
   }
 };
 
@@ -275,45 +600,61 @@ const handleBackendPDFExport = async () => {
         <Select
           label="User"
           value={user}
-          onChange={e => setUser(e.target.value)}
+          onChange={e => {
+  logInfo("User filter changed", e.target.value);
+  setUser(e.target.value);
+}}
           options={users.map(u => ({
-            value: u.name,
-            label: u.name
-          }))}
+  value: u.userId,     // UNIQUE
+  label: u.name
+}))}
         />
 
         <DateInput
   label="From Date"
   value={fromDate}
-  onChange={e => setFromDate(e.target.value)}
+  onChange={e => {
+  logInfo("From Date changed", e.target.value);
+  setFromDate(e.target.value);
+}}
 />
 
 <DateInput
   label="To Date"
   value={toDate}
-  onChange={e => setToDate(e.target.value)}
+  onChange={e => {
+  logInfo("To Date changed", e.target.value);
+  setToDate(e.target.value);
+}}
 />
 
         <Select
-          label="Cluster"
-          value={cluster}
-          onChange={e => setCluster(e.target.value)}
-          options={clusters.map(c => ({
-            value: c.cluster_name,
-            label: c.cluster_name
-          }))}
-        />
+  label="Cluster"
+  value={cluster}
+  onChange={e => {
+  logInfo("Cluster changed (UI)", e.target.value);
+  setCluster(e.target.value);
+}}
+  disabled={isBranchManager || isRegionalManager}
+  options={clusters.map(c => ({
+    value: c.cluster_name,
+    label: c.cluster_name
+  }))}
+/>
 
         <Select
-          label="Branch"
-          value={branch}
-          onChange={e => setBranch(e.target.value)}
-          disabled={!cluster}
-          options={branches.map(b => ({
-            value: b.branch_name,
-            label: b.branch_name
-          }))}
-        />
+  label="Branch"
+  value={branch}
+  onChange={e => {
+  logInfo("Branch changed (UI)", e.target.value);
+  setBranch(e.target.value);
+}}
+  disabled={!cluster || isBranchManager}
+  options={branches.map(b => ({
+    value: b.branch_name,
+    label: b.branch_name
+  }))}
+/>
 
       </div>
 
@@ -335,7 +676,10 @@ const handleBackendPDFExport = async () => {
 
 <button
     className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50"
-    onClick={() => setShowExport(true)}
+    onClick={() => {
+  logInfo("Export modal opened");
+  setShowExport(true);
+}}
     disabled={tableData.length === 0}
   >
     Export PDF
@@ -348,6 +692,7 @@ const handleBackendPDFExport = async () => {
     checked={selectAllAllPages}
     onChange={(e) => {
       const checked = e.target.checked;
+      logInfo("Select all pages toggled", checked);
       setSelectAllAllPages(checked);
 
       if (checked) {
@@ -363,6 +708,11 @@ const handleBackendPDFExport = async () => {
 
       {/* Table */}
       <div className="border rounded-lg overflow-hidden">
+
+<div className="text-center py-3 font-semibold border-b">
+  No. Of Records: {tableData.length}
+</div>
+
         <table className="w-full text-sm border border-slate-300 border-collapse">
           <thead className="bg-slate-100">
   <tr>
@@ -373,9 +723,10 @@ const handleBackendPDFExport = async () => {
         type="checkbox"
         checked={selectAllPage}
         onChange={(e) => {
-          const checked = e.target.checked;
+  const checked = e.target.checked;
+  logInfo("Select current page toggled", checked);
 
-          const pageIDs = paginatedData.map((_, i) => startIndex + i);
+  const pageIDs = paginatedData.map((_, i) => startIndex + i);
 
           if (checked) {
             setSelectedRows(prev =>
@@ -429,6 +780,7 @@ const handleBackendPDFExport = async () => {
               type="checkbox"
               checked={selectedRows.includes(rowIndex)}
               onChange={(e) => {
+                logInfo("Row selection changed", rowIndex);
                 if (e.target.checked) {
                   setSelectedRows(prev => [...prev, rowIndex]);
                 } else {
@@ -463,44 +815,65 @@ const handleBackendPDFExport = async () => {
       </div>
 
       {tableData.length > 0 && (
-  <div className="flex justify-center items-center gap-3 mt-4">
+  <div className="flex items-center justify-between mt-4 text-sm text-slate-600">
 
-    <button
-      className="px-3 py-1 border rounded disabled:opacity-50"
-      disabled={currentPage === 1}
-      onClick={() => setCurrentPage(1)}
-    >
-      ⏮
-    </button>
+    {/* Showing Records */}
+    <div>
+      Showing {indexOfFirstRecord}–{indexOfLastRecord} of {tableData.length}
+    </div>
 
-    <button
-      className="px-3 py-1 border rounded disabled:opacity-50"
-      disabled={currentPage === 1}
-      onClick={() => setCurrentPage(p => p - 1)}
-    >
-      ◀
-    </button>
+    {/* Pagination Controls */}
+    <div className="flex items-center gap-2">
 
-    <span className="text-sm font-medium">
-      Page {currentPage} of {totalPages}
-    </span>
+      <button
+        disabled={currentPage === 1}
+        onClick={() => {
+  logInfo("Pagination → First page");
+  setCurrentPage(1);
+}}
+        className="px-2 py-1 border rounded disabled:opacity-50"
+      >
+        ⏮
+      </button>
 
-    <button
-      className="px-3 py-1 border rounded disabled:opacity-50"
-      disabled={currentPage === totalPages}
-      onClick={() => setCurrentPage(p => p + 1)}
-    >
-      ▶
-    </button>
+      <button
+        disabled={currentPage === 1}
+        onClick={() => {
+  logInfo("Pagination → Previous page");
+  setCurrentPage(p => p - 1);
+}}
+        className="px-2 py-1 border rounded disabled:opacity-50"
+      >
+        ◀
+      </button>
 
-    <button
-      className="px-3 py-1 border rounded disabled:opacity-50"
-      disabled={currentPage === totalPages}
-      onClick={() => setCurrentPage(totalPages)}
-    >
-      ⏭
-    </button>
+      <span>
+        Page {currentPage} of {totalPages}
+      </span>
 
+      <button
+        disabled={currentPage === totalPages}
+        onClick={() => {
+  logInfo("Pagination → Next page");
+  setCurrentPage(p => p + 1);
+}}
+        className="px-2 py-1 border rounded disabled:opacity-50"
+      >
+        ▶
+      </button>
+
+      <button
+        disabled={currentPage === totalPages}
+        onClick={() => {
+  logInfo("Pagination → Last page");
+  setCurrentPage(totalPages);
+}}
+        className="px-2 py-1 border rounded disabled:opacity-50"
+      >
+        ⏭
+      </button>
+
+    </div>
   </div>
 )}
 
@@ -515,7 +888,10 @@ const handleBackendPDFExport = async () => {
       <input
         className="w-full border p-2 rounded mt-1 mb-4"
         value={fileName}
-        onChange={e => setFileName(e.target.value)}
+        onChange={e => {
+  logInfo("Filename changed", e.target.value);
+  setFileName(e.target.value);
+}}
       />
 
       {/* Column Selection */}
@@ -545,7 +921,10 @@ const handleBackendPDFExport = async () => {
       <div className="flex justify-end gap-3">
         <button
           className="px-4 py-2 border rounded"
-          onClick={() => setShowExport(false)}
+          onClick={() => {
+  logInfo("Export modal closed");
+  setShowExport(false);
+}}
         >
           Cancel
         </button>
@@ -567,24 +946,35 @@ const handleBackendPDFExport = async () => {
 
 
 // ================= REUSABLE COMPONENTS =================
-const Select = ({ label, value, onChange, options, disabled }) => (
+const Select = ({ label, value, onChange, options = [], disabled = false }) => (
   <div>
     <label className="text-sm text-slate-600">{label}</label>
+
     <select
       value={value}
       onChange={onChange}
       disabled={disabled}
-      className="w-full mt-1 px-3 py-2 border rounded bg-slate-100 disabled:opacity-50"
+      className={`w-full mt-1 px-3 py-2 border rounded transition-all
+        ${
+          disabled
+            ? "bg-slate-300 text-black font-semibold border-slate-400 cursor-not-allowed"
+            : "bg-slate-100 text-black"
+        }
+      `}
     >
       <option value="">Select</option>
+
       {options.map(o => (
         <option key={o.value} value={o.value}>
           {o.label}
         </option>
       ))}
+
     </select>
   </div>
 );
+
+
 
 const DateInput = ({ label, value, onChange }) => (
   <div>

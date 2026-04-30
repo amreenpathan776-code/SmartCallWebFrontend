@@ -3,10 +3,27 @@ import { NavLink, useLocation } from "react-router-dom";
 const Sidebar = () => {
   const location = useLocation();
 
+const role = localStorage.getItem("role");
+
+const isAdminUser = role === "Admin";
+const isRegionalManager = role?.startsWith("Regional Manager");
+const canViewSMA = isAdminUser || isRegionalManager;
+
+const userId = localStorage.getItem("userId");
+
+const canViewLockedAccounts = [
+  "IT_099_1011",
+  "IT_099_1009",
+  "IT_099_866"
+].includes(userId);
+
   const isTransaction = location.pathname.startsWith("/transaction");
   const isReports = location.pathname.startsWith("/reports");
   const isAdmin = location.pathname.startsWith("/admin");
   const isSecurity = location.pathname.startsWith("/security");
+  const isDashboard = location.pathname === "/dashboard";
+
+  
 
 
   const showModules = isTransaction;
@@ -24,17 +41,20 @@ const Sidebar = () => {
   return (
     <aside className="w-64 bg-white border-r min-h-screen p-4">
       {/* ================= DASHBOARD ================= */}
-      <NavLink to="/" className={linkClass}>
-        Dashboard
-      </NavLink>
+ 
+ {!isDashboard && (
+  <NavLink to="/dashboard" className={linkClass}>
+    Dashboard
+  </NavLink>
+)}
 
       {/* ================= NPA + LEAD MODULES ================= */}
       {showModules && (
         <>
           {/* -------- NPA SECTION -------- */}
-          <p className="text-xs text-slate-400 uppercase mt-6 mb-2">
-            NPA
-          </p>
+          <p className="text-sm font-bold text-slate-900 uppercase mt-6 mb-2">
+  NPA
+</p>
 
           <NavLink
             to="/transaction"
@@ -50,24 +70,18 @@ const Sidebar = () => {
             Member List
           </NavLink>
 
-          <NavLink to="/transaction/file-upload" className={linkClass}>
-            File Upload
-          </NavLink>
+          {isAdminUser && (
+  <NavLink to="/transaction/file-upload" className={linkClass}>
+    File Upload
+  </NavLink>
+)}
 
           <NavLink to="/transaction/activity-status" className={linkClass}>
             Activity Status
           </NavLink>
 
-          <NavLink to="/transaction/send-sms" className={linkClass}>
-            Send SMS
-          </NavLink>
-
-          <NavLink to="/transaction/send-whatsapp" className={linkClass}>
-            Send Whatsapp
-          </NavLink>
-
           {/* -------- LEAD SECTION -------- */}
-          <p className="text-xs text-slate-400 uppercase mt-6 mb-2">
+          <p className="text-sm font-bold text-slate-900 uppercase mt-6 mb-2">
             Lead
           </p>
 
@@ -89,13 +103,34 @@ const Sidebar = () => {
   Lead Activity Status
 </NavLink>
 
-<NavLink to="/transaction/lead/data-upload" className={linkClass}>
-  Lead Data Upload
-</NavLink>
+{isAdminUser && (
+  <NavLink to="/transaction/lead/data-upload" className={linkClass}>
+    Lead Data Upload
+  </NavLink>
+)}
 
-<NavLink to="/transaction/lead/offer-upload" className={linkClass}>
-  Offer Data Upload
-</NavLink>
+{/* -------- SMA SECTION -------- */}
+{canViewSMA && (
+  <>
+    <p className="text-sm font-bold text-slate-900 uppercase mt-6 mb-2">
+      SMA & NPA
+    </p>
+
+    {isAdminUser && (
+      <NavLink to="/transaction/sma/upload" className={linkClass}>
+        File Upload
+      </NavLink>
+    )}
+
+    <NavLink to="/transaction/sma/list" className={linkClass}>
+      SMA & NPA List
+    </NavLink>
+
+    <NavLink to="/transaction/sma/activity-status" className={linkClass}>
+      SMA & NPA Activity Status
+    </NavLink>
+  </>
+)}
 
         </>
       )}
@@ -111,6 +146,10 @@ const Sidebar = () => {
             <NavLink to="/reports/field-visit" className={linkClass}>
               Field Visit Report
             </NavLink>
+
+            <NavLink to="/reports/field-visit-summary" className={linkClass}>
+  Field Visit Summary
+</NavLink>
 
             <NavLink to="/reports/borrowers-phone" className={linkClass}>
               Borrowers Contacted By Phone
@@ -139,26 +178,14 @@ const Sidebar = () => {
       )}
 
 {/* ================= ADMIN ================= */}
-      {isAdmin && (
+      {isAdmin && isAdminUser && (
         <>
-          <p className="text-xs text-slate-400 uppercase mt-6 mb-2">
+          <p className="text-sm font-bold text-slate-900 uppercase mt-6 mb-2">
             Admin
           </p>
 
-          <NavLink to="/admin/product-info" className={linkClass}>
-            Product Info
-          </NavLink>
-
           <NavLink to="/admin/branch" className={linkClass}>
             Branch
-          </NavLink>
-
-          <NavLink to="/admin/generic-key" className={linkClass}>
-            Generic Key
-          </NavLink>
-
-          <NavLink to="/admin/generic-classifier" className={linkClass}>
-            Generic Classifier
           </NavLink>
 
           <NavLink to="/admin/product" className={linkClass}>
@@ -168,9 +195,9 @@ const Sidebar = () => {
       )}
 
       {/* ================= SECURITY ================= */}
-{isSecurity && (
+{isSecurity && isAdminUser && (
   <>
-    <p className="text-xs text-slate-400 uppercase mt-6 mb-2">
+    <p className="text-sm font-bold text-slate-900 uppercase mt-6 mb-2">
       Security
     </p>
 
@@ -181,6 +208,11 @@ const Sidebar = () => {
     <NavLink to="/security/role" className={linkClass}>
       Role
     </NavLink>
+    {canViewLockedAccounts && (
+  <NavLink to="/security/locked-accounts" className={linkClass}>
+    Locked Accounts
+  </NavLink>
+)}
   </>
 )}
     </aside>
@@ -190,7 +222,7 @@ const Sidebar = () => {
 
 const Section = ({ title, children }) => (
   <>
-    <p className="text-xs text-slate-400 uppercase mt-6 mb-2">
+    <p className="text-sm font-bold text-slate-900 uppercase mt-6 mb-2">
       {title}
     </p>
     {children}

@@ -1,6 +1,12 @@
 import { useState } from "react";
 import axios from "axios";
 
+// ✅ Logger (Same style as Transaction)
+const logInfo = (msg, data) => console.log(`📡 ${msg}`, data || "");
+const logSuccess = (msg, data) => console.log(`✅ ${msg}`, data || "");
+const logError = (msg, data) => console.error(`❌ ${msg}`, data || "");
+const logWarn = (msg, data) => console.warn(`⚠️ ${msg}`, data || "");
+
 const FileUpload = () => {
   const [file, setFile] = useState(null);
 const [records, setRecords] = useState([]);
@@ -12,8 +18,10 @@ const [currentPage, setCurrentPage] = useState(1);
 const ROWS_PER_PAGE = 15;
 
   const parsePSV = (file) => {
+    logInfo("File parsing started", file.name);
   const reader = new FileReader();
   reader.onload = () => {
+    logSuccess("File read successfully");
     const text = reader.result;
 
     // Split into lines
@@ -27,11 +35,18 @@ const ROWS_PER_PAGE = 15;
       const values = line.split("|");
       let obj = {};
       headers.forEach((h, i) => {
-        obj[h] = values[i] || null;
-      });
+  const key = h.trim();
+
+  const map = {
+    currentOutStandingBalance: "currentOutstandingBalance"
+  };
+
+  obj[map[key] || key] = values[i] || null;
+});
       return obj;
     });
 
+    logSuccess("Parsed records", { count: json.length });
     setRecords(json);
     setCurrentPage(1);
   };
@@ -41,39 +56,62 @@ const ROWS_PER_PAGE = 15;
 
   const handleFileChange = (e) => {
   const selected = e.target.files[0];
+  logInfo("File selected", selected?.name);
   if (selected && selected.name.toLowerCase().endsWith(".csv")) {
+  logSuccess("Valid CSV file selected");
   setFile(selected);
-  parsePSV(selected); // keep same function
+  parsePSV(selected);
 } else {
+  logWarn("Invalid file format selected");
   alert("Only .CSV files are allowed");
 }
 };
 
 const uploadToDB = async () => {
+  logInfo("Upload process started");
   try {
     setUploading(true);
 
-    const res = await axios.post(
-      "http://40.80.79.26:5001/api/recovery-upload",
+    const userId = localStorage.getItem("userId");
+    logInfo("User ID fetched", userId);
+
+logInfo("Calling Upload API", { totalRecords: records.length });
+    await axios.post(
+      "https://mobile.coastal.bank.in:5001/api/recovery-upload",
       { records },
       {
         maxContentLength: Infinity,
         maxBodyLength: Infinity,
-        headers: { "Content-Type": "application/json" }
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": userId
+        }
+      }
+    );
+    logSuccess("Upload API success");
+
+
+logInfo("Fetching upload status");
+    // 🔹 After upload, fetch status from same API
+    const statusRes = await axios.get(
+      "https://mobile.coastal.bank.in:5001/api/recovery-upload-status",
+      {
+        headers: { "x-user-id": userId }
       }
     );
 
-    // ✅ Set modal data from backend response
-    setStatusData(res.data);
+logSuccess("Upload status received", statusRes.data);
+    setStatusData(statusRes.data);
     setStatusModal(true);
 
-    // ✅ Clear everything after successful upload
+    // Clear after showing modal
     setRecords([]);
     setFile(null);
     setCurrentPage(1);
+    logSuccess("Upload process completed & state reset");
 
   } catch (err) {
-    console.error(err);
+  logError("Upload failed", err);
     alert("Upload Failed!");
   } finally {
     setUploading(false);
@@ -81,14 +119,25 @@ const uploadToDB = async () => {
 };
 
 const fetchUploadStatus = async () => {
+  logInfo("Manual status fetch clicked");
   try {
-    const res = await axios.get(
-      "http://40.80.79.26:5001/api/recovery-upload-status"
-    );
+    const userId = localStorage.getItem("userId");
+
+    logInfo("Calling status API");
+const res = await axios.get(
+  "https://mobile.coastal.bank.in:5001/api/recovery-upload-status",
+  {
+    headers: {
+      "x-user-id": userId
+    }
+  }
+);
+
+logSuccess("Status API success", res.data);
     setStatusData(res.data);
     setStatusModal(true);
   } catch (err) {
-    console.error(err);
+  logError("Status fetch failed", err);
     alert("Failed to fetch upload status");
   }
 };
@@ -106,8 +155,26 @@ const totalPages = Math.max(
   Math.ceil(records.length / ROWS_PER_PAGE)
 );
 
+  const role = localStorage.getItem("role") || "";
 
-  return (
+const isRestricted =
+  role === "Branch Manager" ||
+  role.includes("Regional Manager");
+
+if (isRestricted) {
+    return (
+      <div className="bg-white rounded-xl shadow p-10 text-center">
+        <h2 className="text-xl font-semibold text-red-600 mb-4">
+          Access Restricted
+        </h2>
+        <p className="text-slate-600 text-lg">
+          Please Contact Admin to access this Page.
+        </p>
+      </div>
+    );
+  }
+  
+return (
     <div className="bg-white rounded-xl shadow p-6">
       {/* Upload Box */}
       <div className="border-2 border-dashed rounded-lg p-6 w-1/2 text-center">
@@ -132,41 +199,8 @@ const totalPages = Math.max(
   </p>
 </div>
 
-      {/* Summary Table */}
-<div className="border rounded-lg overflow-x-auto mb-6">
-  <table className="w-full text-sm border border-slate-300">
-    <thead className="border-b bg-white">
-      <tr className="text-slate-700">
-        {[
-          "Column Name",
-          "No Of Valid Records",
-          "No Of Invalid Records",
-        ].map((h) => (
-          <th
-            key={h}
-            className="p-4 text-left font-medium cursor-pointer select-none"
-          >
-            {h} <span className="text-slate-400">▲▼</span>
-          </th>
-        ))}
-      </tr>
-    </thead>
-
-    <tbody>
-      <tr>
-        <td
-          colSpan={3}
-          className="p-8 text-center text-slate-400"
-        >
-          No data available
-        </td>
-      </tr>
-    </tbody>
-  </table>
-</div>
-
       {/* Actions */}
-      <div className="flex gap-4 mb-6">
+      <div className="flex gap-4 mt-6 mb-6">
         <button
   className={`px-4 py-2 rounded text-white transition-all duration-300
     ${uploading ? "bg-blue-700 animate-pulse scale-95" : "bg-blue-600 hover:bg-blue-700 active:scale-95"}

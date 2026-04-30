@@ -1,0 +1,23 @@
+Options -Indexes
+ 
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteBase /SmartRecovery/
+ 
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+ 
+RewriteRule ^ index.html [L]
+</IfModule>
+ 
+<IfModule mod_headers.c>
+ 
+Header always unset Content-Security-Policy
+ 
+Header always set X-Frame-Options "DENY"
+Header always set X-Content-Type-Options "nosniff"
+Header always set Referrer-Policy "strict-origin-when-cross-origin"
+ 
+Header always set Content-Security-Policy "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src * https://mobile.coastal.bank.in:5001; style-src * 'unsafe-inline';"
+</IfModule>

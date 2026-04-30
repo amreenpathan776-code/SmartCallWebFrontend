@@ -1,6 +1,28 @@
 import { useEffect, useState } from "react";
 
+// ================= LOGGER =================
+const getUserId = () => localStorage.getItem("userId") || "Unknown";
+
+const logInfo = (msg, data) =>
+  console.log(`📡 [User:${getUserId()}] ${msg}`, data || "");
+
+const logSuccess = (msg, data) =>
+  console.log(`✅ [User:${getUserId()}] ${msg}`, data || "");
+
+const logError = (msg, data) =>
+  console.error(`❌ [User:${getUserId()}] ${msg}`, data || "");
+
+const logWarn = (msg, data) =>
+  console.warn(`⚠️ [User:${getUserId()}] ${msg}`, data || "");
+
 const UserTrips = () => {
+
+  useEffect(() => {
+  logInfo("USER TRIPS PAGE LOADED", {
+    role: localStorage.getItem("role"),
+    userId: localStorage.getItem("userId")
+  });
+}, []);
 
   // ================= STATE =================
   const [clusters, setClusters] = useState([]);
@@ -17,6 +39,41 @@ const UserTrips = () => {
   const [selectedRows, setSelectedRows] = useState([]);
 const [selectAllPage, setSelectAllPage] = useState(false);
 const [selectAllAllPages, setSelectAllAllPages] = useState(false);
+
+const role = localStorage.getItem("role");
+const userBranch = localStorage.getItem("branchName");
+const userCluster = localStorage.getItem("clusterName");
+const isBranchManager = role === "Branch Manager";
+
+const isRegionalManager = role?.startsWith("Regional Manager");
+
+let rmCluster = "";
+
+if (isRegionalManager) {
+  const match = role.match(/\((.*?)\)/);
+  rmCluster = match ? match[1] : "";
+}
+
+useEffect(() => {
+logInfo("RM Effect Triggered", { isRegionalManager, rmCluster });
+  if (isRegionalManager && rmCluster) {
+logInfo("Regional Manager flow triggered", rmCluster);
+    setCluster(rmCluster);
+
+    fetch(`https://mobile.coastal.bank.in:5001/api/branches/${encodeURIComponent(rmCluster)}`)
+      .then(res => res.json())
+      .then(data => {
+  logSuccess("RM Branches fetched", data);
+  setBranches(data || []);
+})
+      .catch((err) => {
+  logError("RM Branch fetch error", err);
+  setBranches([]);
+});
+
+  }
+
+}, [isRegionalManager, rmCluster]);
 
 const [showExportModal, setShowExportModal] = useState(false);
 const [exportFileName, setExportFileName] = useState("User_Trips_Report");
@@ -42,48 +99,71 @@ const [selectedColumns, setSelectedColumns] = useState([
 
   // ================= LOAD CLUSTERS =================
   useEffect(() => {
-  fetch("http://40.80.79.26:5001/api/clusters")
+    logInfo("Fetching clusters API");
+  fetch("https://mobile.coastal.bank.in:5001/api/clusters")
     .then(res => res.json())
     .then(data => {
+  logSuccess("Clusters fetched", data);
       setClusters([
         { cluster_name: "Corporate Office" },
         ...data
       ]);
-    });
+    })
+    .catch((err) => {
+  logError("Cluster fetch error", err);
+});
 }, []);
 
   // ================= CLUSTER CHANGE =================
   useEffect(() => {
 
   const loadBranchData = async () => {
+    logInfo("Cluster changed", cluster);
 
     if (!cluster) {
       setBranches([]);
-      setBranch("");
+      if (!isBranchManager) {
+        setBranch("");
+      }
       return;
     }
 
     try {
+      logInfo("Fetching branches for cluster", cluster);
       const res = await fetch(
-        `http://40.80.79.26:5001/api/branches/${encodeURIComponent(cluster)}`
+        `https://mobile.coastal.bank.in:5001/api/branches/${encodeURIComponent(cluster)}`
       );
 
       const data = await res.json();
+      if (!res.ok) {
+  logError("User Trips API returned error status", res.status);
+}
+      logSuccess("Branches loaded", data);
       setBranches(data || []);
 
-    } catch (err) {
-      console.error("Branch load error:", err);
-    }
+      // 🔒 Only clear branch if NOT Branch Manager
+      if (!isBranchManager) {
+        setBranch("");
+      }
 
-    setBranch("");
+    } catch (err) {
+  logError("Branch load error", err);
+    }
   };
 
   loadBranchData();
 
-}, [cluster]);
+}, [cluster, isBranchManager]);
 
   // ================= SEARCH =================
   const handleSearch = async () => {
+
+    logInfo("USER TRIPS SEARCH STARTED", {
+  cluster,
+  branch,
+  fromDate,
+  toDate
+});
 
   const hasAnyFilter =
     cluster ||
@@ -93,22 +173,28 @@ const [selectedColumns, setSelectedColumns] = useState([
 
   if (!hasAnyFilter) {
     alert("Please select at least one filter before searching.");
+    logWarn("Search blocked - no filters");
     return; // 🚫 STOP SEARCH
   }
-
+logInfo("Calling User Trips API");
   setLoading(true);
 
   try {
-    const res = await fetch("http://40.80.79.26:5001/api/user-trips", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        cluster,
-        branch,
-        fromDate,
-        toDate
-      })
-    });
+    const res = await fetch("https://mobile.coastal.bank.in:5001/api/user-trips", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-user-role": localStorage.getItem("role"),
+    "x-user-branch": localStorage.getItem("branchName"),
+    "x-user-cluster": localStorage.getItem("clusterName")
+  },
+  body: JSON.stringify({
+    cluster,
+    branch,
+    fromDate,
+    toDate
+  })
+});
 
     const data = await res.json();
 
@@ -117,9 +203,12 @@ const [selectedColumns, setSelectedColumns] = useState([
     setSelectedRows([]);
     setSelectAllPage(false);
     setSelectAllAllPages(false);
+    logSuccess("SEARCH SUCCESS", {
+  count: data?.length || 0
+});
 
   } catch (err) {
-    console.error("SEARCH ERROR:", err);
+  logError("SEARCH FAILED", err);
   } finally {
     setLoading(false);
   }
@@ -127,23 +216,47 @@ const [selectedColumns, setSelectedColumns] = useState([
 
   // ================= RESET =================
   const handleReset = () => {
+
+    logWarn("RESET TRIGGERED");
+
+  if (isBranchManager) {
+
+  setCluster(userCluster);
+  setBranch(userBranch);
+
+}
+else if (isRegionalManager) {
+
+  setCluster(rmCluster);
+  setBranch("");
+
+}
+else {
+
   setCluster("");
   setBranch("");
+
+}
+
   setFromDate("");
   setToDate("");
-  setBranches([]);
   setTrips([]);
-setCurrentPage(1);
-setSelectedRows([]);
-setSelectAllPage(false);
-setSelectAllAllPages(false);
+  setCurrentPage(1);
+  setSelectedRows([]);
+  setSelectAllPage(false);
+  setSelectAllAllPages(false);
+  logSuccess("RESET COMPLETED");
 };
 
 const indexOfLastRecord = currentPage * recordsPerPage;
 const indexOfFirstRecord = indexOfLastRecord - recordsPerPage;
+
 const currentTrips = trips.slice(indexOfFirstRecord, indexOfLastRecord);
 
 const totalPages = Math.ceil(trips.length / recordsPerPage);
+
+const firstRecord = trips.length === 0 ? 0 : indexOfFirstRecord + 1;
+const lastRecord = Math.min(indexOfLastRecord, trips.length);
 
 useEffect(() => {
   const pageIndexes = currentTrips.map(
@@ -159,11 +272,11 @@ useEffect(() => {
 }, [currentPage, selectedRows, currentTrips, indexOfFirstRecord]);
 
 const handleExportPDF = async () => {
-
-  if (selectedRows.length === 0) {
-    alert("No records selected");
-    return;
-  }
+  logInfo("EXPORT PDF STARTED", {
+  selectedRows,
+  selectedColumns,
+  exportFileName
+});
 
   if (selectedColumns.length === 0) {
     alert("Please select at least one column");
@@ -171,13 +284,20 @@ const handleExportPDF = async () => {
   }
 
   try {
+
+    const indexesToExport =
+      selectedRows.length === 0
+        ? trips.map((_, i) => i)   // export ALL results
+        : selectedRows;            // export selected rows
+
+logInfo("Calling Export PDF API");
     const response = await fetch(
-      "http://40.80.79.26:5001/api/user-trips/export-pdf",
+      "https://mobile.coastal.bank.in:5001/api/user-trips/export-pdf",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          selectedIndexes: selectedRows,
+          selectedIndexes: indexesToExport,
           columns: selectedColumns,
           fileName: exportFileName,
           fullData: trips
@@ -192,11 +312,73 @@ const handleExportPDF = async () => {
     link.href = url;
     link.download = `${exportFileName}.pdf`;
     link.click();
+logSuccess("PDF EXPORTED SUCCESSFULLY");
+    setShowExportModal(false);
+    
+
+  } catch (err) {
+  logError("PDF EXPORT FAILED", err);
+  alert("PDF export failed");
+  }
+};
+
+useEffect(() => {
+  if (isBranchManager && userCluster && userBranch) {
+    setCluster(userCluster);
+    setBranch(userBranch);
+  }
+}, [isBranchManager, userCluster, userBranch]);
+
+
+const handleExportExcel = async () => {
+
+  logInfo("EXPORT EXCEL STARTED", {
+  selectedRows,
+  selectedColumns,
+  exportFileName
+});
+
+  if (selectedColumns.length === 0) {
+    alert("Please select at least one column");
+    return;
+  }
+
+  try {
+
+    const indexesToExport =
+      selectedRows.length === 0
+        ? trips.map((_, i) => i)
+        : selectedRows;
+
+        logInfo("Calling Export Excel API");
+    const response = await fetch(
+      "https://mobile.coastal.bank.in:5001/api/user-trips/export-excel",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          selectedIndexes: indexesToExport,
+          columns: selectedColumns,
+          fileName: exportFileName,
+          fullData: trips
+        })
+      }
+    );
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${exportFileName}.xlsx`;
+    link.click();
+    logSuccess("EXCEL EXPORTED SUCCESSFULLY");
 
     setShowExportModal(false);
 
   } catch (err) {
-    alert("PDF export failed");
+  logError("EXCEL EXPORT FAILED", err);
+  alert("Excel export failed");
   }
 };
 
@@ -213,7 +395,10 @@ const handleExportPDF = async () => {
             <input
               type="date"
               value={fromDate}
-              onChange={e => setFromDate(e.target.value)}
+              onChange={e => {
+  logInfo("Filter changed", { field: "fromDate", value: e.target.value });
+  setFromDate(e.target.value);
+}}
               className="w-full mt-1 px-3 py-2 bg-slate-100 border rounded"
             />
           </div>
@@ -224,7 +409,10 @@ const handleExportPDF = async () => {
             <input
               type="date"
               value={toDate}
-              onChange={e => setToDate(e.target.value)}
+              onChange={e => {
+  logInfo("Filter changed", { field: "toDate", value: e.target.value });
+  setToDate(e.target.value);
+}}
               className="w-full mt-1 px-3 py-2 bg-slate-100 border rounded"
             />
           </div>
@@ -233,10 +421,19 @@ const handleExportPDF = async () => {
           <div>
             <label className="text-sm text-slate-600">Cluster</label>
             <select
-              value={cluster}
-              onChange={e => setCluster(e.target.value)}
-              className="w-full mt-1 px-3 py-2 bg-slate-100 border rounded"
-            >
+  value={cluster}
+  disabled={isBranchManager || isRegionalManager}
+  onChange={e => {
+  logInfo("Filter changed", { field: "cluster", value: e.target.value });
+  setCluster(e.target.value);
+}}
+  className={`w-full mt-1 px-3 py-2 border rounded
+  ${
+    isBranchManager || isRegionalManager
+      ? "bg-slate-300 text-black font-semibold border-slate-400 cursor-not-allowed"
+      : "bg-slate-100"
+  }`}
+>
               <option value="">Select</option>
               {clusters.map(c => (
                 <option key={c.cluster_name} value={c.cluster_name}>
@@ -250,10 +447,18 @@ const handleExportPDF = async () => {
           <div>
             <label className="text-sm text-slate-600">Branch</label>
             <select
-  disabled={!cluster}
+  disabled={!cluster || isBranchManager}
   value={branch}
-  onChange={e => setBranch(e.target.value)}
-  className="w-full mt-1 px-3 py-2 bg-slate-100 border rounded"
+  onChange={e => {
+  logInfo("Filter changed", { field: "branch", value: e.target.value });
+  setBranch(e.target.value);
+}}
+  className={`w-full mt-1 px-3 py-2 border rounded
+  ${
+    isBranchManager
+      ? "bg-slate-300 text-black font-semibold border-slate-400 cursor-not-allowed"
+      : "bg-slate-100"
+  }`}
 >
               <option value="">Select</option>
               {branches.map(b => (
@@ -280,15 +485,10 @@ const handleExportPDF = async () => {
               Reset
             </button>
 
-            <button
-  onClick={() => {
-    if (selectedRows.length === 0) {
-      alert("Please select at least one record");
-      return;
-    }
-    setShowExportModal(true);
-  }}
-  className="px-6 py-2 bg-blue-600 text-white rounded"
+           <button
+  onClick={() => setShowExportModal(true)}
+  disabled={trips.length === 0}
+  className="px-6 py-2 bg-blue-600 text-white rounded disabled:opacity-40"
 >
   Export Data
 </button>
@@ -321,7 +521,12 @@ const handleExportPDF = async () => {
 )}
 
       {/* ================= TABLE ================= */}
-      <div className="bg-white rounded-xl border mt-6 flex flex-col flex-1 overflow-hidden">
+<div className="bg-white rounded-xl border mt-6 flex flex-col flex-1 overflow-hidden">
+
+  {/* Record Count */}
+  <div className="text-center py-3 font-semibold border-b">
+    No. Of Records: {trips.length}
+  </div>
         <div className="flex-1 overflow-x-auto overflow-y-auto">
           <table className="min-w-[2000px] w-full text-sm border-collapse">
             <thead className="bg-slate-100 sticky top-0 z-20">
@@ -440,58 +645,6 @@ const handleExportPDF = async () => {
 </tbody>
           </table>
 
-{/* ================= PAGINATION ================= */}
-{trips.length > 0 && (
-  <div className="flex justify-between items-center px-6 py-4 border-t bg-white">
-
-    <span className="text-sm text-slate-600">
-      Showing {indexOfFirstRecord + 1} –
-      {Math.min(indexOfLastRecord, trips.length)} of {trips.length}
-    </span>
-
-    <div className="flex gap-2">
-
-      <button
-        disabled={currentPage === 1}
-        onClick={() => setCurrentPage(1)}
-        className="px-3 py-1 border rounded disabled:opacity-40"
-      >
-        ⏮
-      </button>
-
-      <button
-        disabled={currentPage === 1}
-        onClick={() => setCurrentPage(p => p - 1)}
-        className="px-3 py-1 border rounded disabled:opacity-40"
-      >
-        ◀
-      </button>
-
-      <span className="px-3 py-1 text-sm">
-        Page {currentPage} of {totalPages}
-      </span>
-
-      <button
-        disabled={currentPage === totalPages}
-        onClick={() => setCurrentPage(p => p + 1)}
-        className="px-3 py-1 border rounded disabled:opacity-40"
-      >
-        ▶
-      </button>
-
-      <button
-        disabled={currentPage === totalPages}
-        onClick={() => setCurrentPage(totalPages)}
-        className="px-3 py-1 border rounded disabled:opacity-40"
-      >
-        ⏭
-      </button>
-
-    </div>
-
-  </div>
-)}
-
 {showExportModal && (
   <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
     <div className="bg-white w-[500px] p-6 rounded-xl">
@@ -547,18 +700,82 @@ const handleExportPDF = async () => {
           Cancel
         </button>
 
-        <button
-          onClick={handleExportPDF}
-          className="px-4 py-2 bg-blue-600 text-white rounded"
-        >
-          Download PDF
-        </button>
-      </div>
+        <div className="flex gap-3">
 
+<button
+  onClick={handleExportExcel}
+  className="px-4 py-2 bg-green-600 text-white rounded"
+>
+  Export Excel
+</button>
+
+<button
+  onClick={handleExportPDF}
+  className="px-4 py-2 bg-blue-600 text-white rounded"
+>
+  Export PDF
+</button>
+
+</div>
+      </div>
     </div>
   </div>
 )}
+
         </div>
+
+        {/* ================= PAGINATION ================= */}
+{trips.length > 0 && (
+  <div className="flex items-center justify-between px-6 py-4 border-t bg-white text-sm text-slate-600">
+
+  {/* Showing Records */}
+  <div>
+    Showing {firstRecord}-{lastRecord} of {trips.length}
+  </div>
+
+  {/* Pagination Controls */}
+  <div className="flex items-center gap-2">
+
+    <button
+      disabled={currentPage === 1}
+      onClick={() => setCurrentPage(1)}
+      className="px-2 py-1 border rounded hover:bg-slate-100 disabled:opacity-50"
+    >
+      ⏮
+    </button>
+
+    <button
+      disabled={currentPage === 1}
+      onClick={() => setCurrentPage(p => p - 1)}
+      className="px-2 py-1 border rounded hover:bg-slate-100 disabled:opacity-50"
+    >
+      ◀
+    </button>
+
+    <span>
+      Page {currentPage} of {totalPages}
+    </span>
+
+    <button
+      disabled={currentPage === totalPages}
+      onClick={() => setCurrentPage(p => p + 1)}
+      className="px-2 py-1 border rounded hover:bg-slate-100 disabled:opacity-50"
+    >
+      ▶
+    </button>
+
+    <button
+      disabled={currentPage === totalPages}
+      onClick={() => setCurrentPage(totalPages)}
+      className="px-2 py-1 border rounded hover:bg-slate-100 disabled:opacity-50"
+    >
+      ⏭
+    </button>
+
+  </div>
+
+</div>
+)}
       </div>
     </div>
   );

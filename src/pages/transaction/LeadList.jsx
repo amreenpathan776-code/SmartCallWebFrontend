@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
 
+// ✅ Logger (Same style as reference)
+const logInfo = (msg, data) => console.log(`📡 ${msg}`, data || "");
+const logSuccess = (msg, data) => console.log(`✅ ${msg}`, data || "");
+const logError = (msg, data) => console.error(`❌ ${msg}`, data || "");
+const logWarn = (msg, data) => console.warn(`⚠️ ${msg}`, data || "");
+
 const LeadList = () => {
   const [filters, setFilters] = useState({
     memberName: "",
@@ -24,67 +30,152 @@ const ROWS_PER_PAGE = 15;
 const [selectedRows, setSelectedRows] = useState([]);
 const [selectAllCurrentPage, setSelectAllCurrentPage] = useState(false);
 const [selectAllAllPages, setSelectAllAllPages] = useState(false);
+const [assignUser, setAssignUser] = useState("");
+const [selectedLead, setSelectedLead] = useState(null);
+
+const role = localStorage.getItem("role");
+const userId = localStorage.getItem("userId");
+const userBranch = localStorage.getItem("branchName");
+const userCluster = localStorage.getItem("clusterName");
+
+const isBranchManager = role === "Branch Manager";
+const isRegionalManager = role?.startsWith("Regional Manager");
+
+useEffect(() => {
+
+  if (isBranchManager) {
+
+    setFilters(prev => ({
+      ...prev,
+      cluster: userCluster,
+      branch: userBranch
+    }));
+
+    fetch(`https://mobile.coastal.bank.in:5001/api/branches/${userCluster}`)
+      .then(res => res.json())
+      .then(setBranches);
+
+  }
+
+  if (isRegionalManager) {
+
+    setFilters(prev => ({
+      ...prev,
+      cluster: userCluster
+    }));
+
+    fetch(`https://mobile.coastal.bank.in:5001/api/branches/${userCluster}`)
+      .then(res => res.json())
+      .then(setBranches);
+
+  }
+
+}, [isBranchManager, isRegionalManager, userCluster, userBranch]);
 
 
 useEffect(() => {
-  fetch("http://40.80.79.26:5001/api/clusters")
-    .then(res => res.json())
-    .then(setClusters);
+  logInfo("Calling API: GET /api/clusters");
+fetch("https://mobile.coastal.bank.in:5001/api/clusters")
+  .then(res => res.json())
+  .then(data => {
+    logSuccess("Clusters fetched", data);
+    setClusters(data);
+  })
+  .catch(err => logError("Clusters API failed", err));
 
-  fetch("http://40.80.79.26:5001/api/products")
-    .then(res => res.json())
-    .then(setProducts);
+  logInfo("Calling API: GET /api/products");
+fetch("https://mobile.coastal.bank.in:5001/api/products")
+  .then(res => res.json())
+  .then(data => {
+    logSuccess("Products fetched", data);
+    setProducts(data);
+  })
+  .catch(err => logError("Products API failed", err));
 }, []);
 
 useEffect(() => {
-  // ✅ If NO cluster selected → load ALL branches
+
   if (!filters.cluster) {
-    fetch("http://40.80.79.26:5001/api/branches")
+
+    fetch("https://mobile.coastal.bank.in:5001/api/branches")
       .then(res => res.json())
       .then(setBranches);
 
     return;
   }
 
-  // ✅ If cluster selected (including Corporate Office)
-  fetch(`http://40.80.79.26:5001/api/branches/${filters.cluster}`)
+  fetch(`https://mobile.coastal.bank.in:5001/api/branches/${filters.cluster}`)
     .then(res => res.json())
-    .then(setBranches);
+    .then(data => {
 
-  // reset dependent fields
-  setFilters(f => ({ ...f, branch: "", assignedTo: "" }));
-}, [filters.cluster]);
+      setBranches(data);
+
+      if (isBranchManager) {
+        setFilters(prev => ({
+          ...prev,
+          branch: userBranch
+        }));
+      } else {
+        setFilters(prev => ({
+          ...prev,
+          branch: "",
+          assignedTo: ""
+        }));
+      }
+
+    });
+
+}, [filters.cluster, isBranchManager, userBranch]);
 
 
 useEffect(() => {
-  // ✅ If NO branch selected → load ALL users
-  if (!filters.branch) {
-    fetch("http://40.80.79.26:5001/api/assignUsers", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        cluster: filters.cluster || "",
-        branchName: "",
-      }),
-    })
-      .then(res => res.json())
-      .then(setUsers);
 
-    return;
-  }
+  const branchToUse = isBranchManager
+    ? userBranch
+    : filters.branch || "";
 
-  // ✅ If branch selected → filtered users
-  fetch("http://40.80.79.26:5001/api/assignUsers", {
+  const clusterToUse = isRegionalManager
+    ? userCluster
+    : filters.cluster || "";
+
+
+    logInfo("Calling API: POST /api/assignUsers/v2", {
+  cluster: clusterToUse,
+  branchName: branchToUse
+});
+  fetch("https://mobile.coastal.bank.in:5001/api/assignUsers/v2", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-user-id": userId
+    },
     body: JSON.stringify({
-      cluster: filters.cluster,
-      branchName: filters.branch,
+      cluster: clusterToUse,
+      branchName: branchToUse
     }),
   })
-    .then(res => res.json())
-    .then(setUsers);
-}, [filters.branch, filters.cluster]);
+    .then(res => {
+      if (!res.ok) throw new Error("Unauthorized");
+      return res.json();
+    })
+    .then(data => {
+      logSuccess("Assign Users fetched", data);
+      setUsers(Array.isArray(data) ? data : []);
+    })
+    .catch(err => {
+  logError("Assign Users API failed", err);
+  setUsers([]);
+});
+
+}, [
+  filters.branch,
+  filters.cluster,
+  isBranchManager,
+  isRegionalManager,
+  userBranch,
+  userCluster,
+  userId
+]);
 
 // ✅ Pagination Logic
 const indexOfLastRecord = currentPage * ROWS_PER_PAGE;
@@ -97,6 +188,9 @@ const totalPages = Math.max(
   1,
   Math.ceil(rows.length / ROWS_PER_PAGE)
 );
+
+const firstRecord = rows.length === 0 ? 0 : indexOfFirstRecord + 1;
+const lastRecord = Math.min(indexOfLastRecord, rows.length);
 
 
 useEffect(() => {
@@ -111,25 +205,72 @@ useEffect(() => {
 
 
 const handleReset = () => {
-  setFilters({
-    memberName: "",
-    mobileNumber: "",
-    pincode: "",
-    cluster: "",
-    branch: "",
-    product: "",
-    assignedTo: "",
-    leadType: "",
-  });
+
+  if (isBranchManager) {
+
+    setFilters({
+      memberName: "",
+      mobileNumber: "",
+      pincode: "",
+      cluster: userCluster,
+      branch: userBranch,
+      product: "",
+      assignedTo: "",
+      leadType: "",
+    });
+
+    logInfo("Calling API: GET /api/branches (by cluster)", userCluster);
+    fetch(`https://mobile.coastal.bank.in:5001/api/branches/${userCluster}`)
+      .then(res => res.json())
+      .then(data => {
+  logSuccess("Branches fetched", data);
+  setBranches(data);
+})
+.catch(err => logError("Branches API failed", err));
+
+
+  } 
+  else if (isRegionalManager) {
+
+    setFilters({
+      memberName: "",
+      mobileNumber: "",
+      pincode: "",
+      cluster: userCluster,   // ✅ keep cluster
+      branch: "",
+      product: "",
+      assignedTo: "",
+      leadType: "",
+    });
+
+    fetch(`https://mobile.coastal.bank.in:5001/api/branches/${userCluster}`)
+      .then(res => res.json())
+      .then(setBranches);
+
+  } 
+  else {
+
+    setFilters({
+      memberName: "",
+      mobileNumber: "",
+      pincode: "",
+      cluster: "",
+      branch: "",
+      product: "",
+      assignedTo: "",
+      leadType: "",
+    });
+
+    setBranches([]);
+
+  }
 
   setRows([]);
-  setBranches([]);
-  setUsers([]);
   setCurrentPage(1);
-setSelectedRows([]);
-setSelectAllCurrentPage(false);
-setSelectAllAllPages(false);
-
+  setSelectedRows([]);
+  setSelectAllCurrentPage(false);
+  setSelectAllAllPages(false);
+  setAssignUser("");
 };
 
 const handleSearch = async () => {
@@ -144,22 +285,28 @@ const handleSearch = async () => {
     !filters.leadType;
 
   if (noFilterSelected) {
+    logWarn("Search attempted without filters");
     alert("Please select at least one filter");
     setRows([]);
     return;
   }
 
   try {
+    logInfo("Calling API: POST /api/lead/list/search", filters);
     const res = await fetch(
-      "http://40.80.79.26:5001/api/lead/list/search",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(filters),
-      }
-    );
+  "https://mobile.coastal.bank.in:5001/api/lead/list/search",
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-user-id": userId
+    },
+    body: JSON.stringify(filters),
+  }
+);
 
     const data = await res.json();
+    logSuccess("Search results received", data);
 
     setRows(Array.isArray(data) ? data : []);
     setCurrentPage(1);
@@ -169,8 +316,84 @@ const handleSearch = async () => {
 
   } catch (err) {
     console.error(err);
+    logError("Search API failed", err);
     setRows([]);
   }
+};
+
+const handleAssign = async () => {
+
+  if (!assignUser) {
+    logWarn("Assign attempted without selecting user");
+    alert("Please select user to assign");
+    return;
+  }
+
+  if (selectedRows.length === 0) {
+    logWarn("Assign attempted without selecting leads");
+    alert("Please select at least one lead");
+    return;
+  }
+
+  // 🚫 Check if any selected lead is completed
+  const completedLeads = rows.filter(
+    r =>
+      selectedRows.includes(r.mobileNumber) &&
+      (r.status === "OPEN" || r.status === "NOT INTERESTED")
+  );
+
+  if (completedLeads.length > 0) {
+    logWarn("Assign attempted on completed leads", completedLeads);
+    alert("Completed Accounts cannot be assigned.");
+    return;
+  }
+
+  try {
+    logInfo("Calling API: POST /api/lead/assign", {
+  mobileNumbers: selectedRows,
+  assignedUserId: assignUser
+});
+
+    const res = await fetch(
+      "https://mobile.coastal.bank.in:5001/api/lead/assign",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": userId
+        },
+        body: JSON.stringify({
+          mobileNumbers: selectedRows,
+          assignedUserId: assignUser
+        })
+      }
+    );
+
+    const data = await res.json();
+    logSuccess("Assign API success", data);
+
+    alert(data.message);
+
+    setSelectedRows([]);
+    setSelectAllCurrentPage(false);
+    setSelectAllAllPages(false);
+
+  } catch (err) {
+    console.error(err);
+    logError("Assign API failed", err);
+  }
+};
+
+const formatDate = (date) => {
+  if (!date) return "";
+
+  const d = new Date(date);
+
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = d.getFullYear();
+
+  return `${day}-${month}-${year}`;
 };
 
   return (
@@ -198,7 +421,10 @@ const handleSearch = async () => {
           <Select
   label="Cluster"
   value={filters.cluster}
-  onChange={v => setFilters(f => ({ ...f, cluster: v }))}
+  onChange={v => {
+    if (isBranchManager) return;
+    setFilters(f => ({ ...f, cluster: v }));
+  }}
   options={[
     { value: "Corporate Office", label: "Corporate Office" },
     ...clusters.map(c => ({
@@ -206,16 +432,21 @@ const handleSearch = async () => {
       label: c.cluster_name,
     })),
   ]}
+  disabled={isBranchManager || isRegionalManager}
 />
 
           <Select
   label="Branch"
   value={filters.branch}
-  onChange={v => setFilters(f => ({ ...f, branch: v }))}
+  onChange={v => {
+    if (isBranchManager) return;
+    setFilters(f => ({ ...f, branch: v }));
+  }}
   options={branches.map(b => ({
     value: b.branch_name,
     label: b.branch_name,
   }))}
+  disabled={isBranchManager}
 />
 
           <Select
@@ -336,6 +567,9 @@ const handleSearch = async () => {
         <th className="p-3 border border-slate-300 text-left">
           Lead Status
         </th>
+        <th className="p-3 border border-slate-300 text-center">
+  Action
+</th>
       </tr>
     </thead>
 
@@ -394,8 +628,46 @@ const handleSearch = async () => {
               </td>
 
               <td className="p-3 border border-slate-300">
-                {r.status}
-              </td>
+  <span
+className={`font-semibold ${
+  r.status === "OPEN"
+    ? "text-green-600"
+    : r.status === "WORKING"
+    ? "text-blue-600"
+    : r.status === "NOT INTERESTED"
+    ? "text-gray-600"
+    : "text-red-600"
+}`}
+>
+  {r.status}
+</span>
+</td>
+<td className="p-3 border border-slate-300 text-center">
+  <button
+    onClick={async () => {
+
+  try {
+logInfo("Calling API: GET /api/lead/details", r.SNo);
+    const res = await fetch(
+      `https://mobile.coastal.bank.in:5001/api/lead/details/${r.SNo}`
+    );
+
+    const data = await res.json();
+    logSuccess("Lead details fetched", data);
+
+    setSelectedLead(data);
+
+  } catch (err) {
+    console.error(err);
+    logError("Lead details API failed", err);
+  }
+
+}}
+    className="px-3 py-1 bg-blue-500 text-white rounded text-xs"
+  >
+    View Details
+  </button>
+</td>
             </tr>
           );
         })
@@ -408,99 +680,180 @@ const handleSearch = async () => {
         {rows.length > 0 && (
   <div className="flex items-center justify-between mt-4 text-sm text-slate-600">
 
-    <div>
-      Page {currentPage} of {totalPages}
-    </div>
-
-    <div className="flex items-center gap-2">
-
-      <button
-        disabled={currentPage === 1}
-        onClick={() => {
-          setCurrentPage(1);
-          setSelectAllCurrentPage(false);
-        }}
-        className="px-2 py-1 border rounded disabled:opacity-50"
-      >
-        ⏮
-      </button>
-
-      <button
-        disabled={currentPage === 1}
-        onClick={() => {
-          setCurrentPage(prev => prev - 1);
-          setSelectAllCurrentPage(false);
-        }}
-        className="px-2 py-1 border rounded disabled:opacity-50"
-      >
-        ◀
-      </button>
-
-      <button
-        disabled={currentPage === totalPages}
-        onClick={() => {
-          setCurrentPage(prev => prev + 1);
-          setSelectAllCurrentPage(false);
-        }}
-        className="px-2 py-1 border rounded disabled:opacity-50"
-      >
-        ▶
-      </button>
-
-      <button
-        disabled={currentPage === totalPages}
-        onClick={() => {
-          setCurrentPage(totalPages);
-          setSelectAllCurrentPage(false);
-        }}
-        className="px-2 py-1 border rounded disabled:opacity-50"
-      >
-        ⏭
-      </button>
-
-    </div>
+  {/* Showing Records */}
+  <div>
+    Showing {firstRecord}-{lastRecord} of {rows.length}
   </div>
+
+  {/* Pagination Controls */}
+  <div className="flex items-center gap-2">
+
+    <button
+      disabled={currentPage === 1}
+      onClick={() => {
+        setCurrentPage(1);
+        setSelectAllCurrentPage(false);
+      }}
+      className="px-2 py-1 border rounded disabled:opacity-50"
+    >
+      ⏮
+    </button>
+
+    <button
+      disabled={currentPage === 1}
+      onClick={() => {
+        setCurrentPage(prev => prev - 1);
+        setSelectAllCurrentPage(false);
+      }}
+      className="px-2 py-1 border rounded disabled:opacity-50"
+    >
+      ◀
+    </button>
+
+    <span>
+      Page {currentPage} of {totalPages}
+    </span>
+
+    <button
+      disabled={currentPage === totalPages}
+      onClick={() => {
+        setCurrentPage(prev => prev + 1);
+        setSelectAllCurrentPage(false);
+      }}
+      className="px-2 py-1 border rounded disabled:opacity-50"
+    >
+      ▶
+    </button>
+
+    <button
+      disabled={currentPage === totalPages}
+      onClick={() => {
+        setCurrentPage(totalPages);
+        setSelectAllCurrentPage(false);
+      }}
+      className="px-2 py-1 border rounded disabled:opacity-50"
+    >
+      ⏭
+    </button>
+
+  </div>
+
+</div>
 )}
         {/* Assign */}
         <div className="flex items-center gap-4 mt-6">
-          <Select label="Assign To" />
-          <button className="px-6 py-2 bg-primary text-white rounded">
-            Assign
-          </button>
-        </div>
+
+  <Select
+    label="Assign To"
+    value={assignUser}
+    onChange={setAssignUser}
+    options={users.map(u => ({
+      value: u.userId,
+      label: u.name,
+    }))}
+  />
+
+  <button
+  onClick={handleAssign}
+  className="px-6 py-2 bg-primary text-white rounded"
+>
+  Assign
+</button>
+
+</div>
       </div>
+
+{selectedLead && (
+  <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
+
+    <div className="bg-white rounded-lg shadow-xl w-[900px] p-6">
+
+      <h2 className="text-lg font-semibold mb-6">
+        Transaction Data Detail
+      </h2>
+
+      <div className="grid grid-cols-2 gap-6">
+
+        <Input
+  label="Customer Name"
+  value={selectedLead?.FullName || ""}
+  readOnly
+/>
+<Input label="Product" value={selectedLead?.SelectProduct || ""} readOnly />
+        <Input label="Date of Birth" value={formatDate(selectedLead?.DOB)} readOnly />
+<Input label="Gender" value="" readOnly />
+<Input label="Pan Card Number" value="" readOnly />
+<Input label="Address" value={selectedLead?.Address || ""} readOnly />
+<Input label="Pincode" value={selectedLead?.PinCode || ""} readOnly />
+<Input label="Mobile Number" value={selectedLead?.MobileNumber || ""} readOnly />
+<Input label="Account #" value="" readOnly />
+
+      </div>
+
+      <div className="flex justify-end gap-3 mt-6">
+
+        <button
+          onClick={() => setSelectedLead(null)}
+          className="px-4 py-2 bg-slate-200 rounded"
+        >
+          Close
+        </button>
+
+      </div>
+
+    </div>
+
+  </div>
+)}
+
     </main>
   );
 };
 
 /* Reusable Components */
-const Input = ({ label, value, onChange }) => (
+const Input = ({ label, value, onChange, readOnly = false }) => (
   <div>
     <label className="text-sm text-slate-600">{label}</label>
+
     <input
       value={value}
-      onChange={e => onChange(e.target.value)}
-      className="w-full mt-1 px-3 py-2 border rounded bg-slate-100"
+      readOnly={readOnly}
+      onChange={(e) => !readOnly && onChange(e.target.value)}
+      className={`w-full mt-1 px-3 py-2 border rounded ${
+        readOnly
+          ? "bg-slate-200 cursor-not-allowed"
+          : "bg-slate-100"
+      }`}
     />
+
   </div>
 );
 
-
-const Select = ({ label, value, onChange, options = [] }) => (
+const Select = ({ label, value, onChange, options = [], disabled = false }) => (
   <div>
     <label className="text-sm text-slate-600">{label}</label>
+
     <select
       value={value}
       onChange={e => onChange(e.target.value)}
-      className="w-full mt-1 px-3 py-2 border rounded bg-slate-100"
+      disabled={disabled}
+      className={`w-full mt-1 px-3 py-2 border rounded transition-all
+        ${
+          disabled
+            ? "bg-slate-300 text-black font-semibold border-slate-400 cursor-not-allowed"
+            : "bg-slate-100 text-black"
+        }
+      `}
     >
       <option value="">Select</option>
+
       {options.map(o => (
         <option key={o.value} value={o.value}>
           {o.label}
         </option>
       ))}
     </select>
+
   </div>
 );
 

@@ -24,6 +24,7 @@ const startIndex = (currentPage - 1) * RECORDS_PER_PAGE;
 const endIndex = startIndex + RECORDS_PER_PAGE;
 
 const currentPageData = products.slice(startIndex, endIndex);
+const [originalProductCode, setOriginalProductCode] = useState("");
 
   // 📝 Form data
   const [formData, setFormData] = useState({
@@ -42,7 +43,7 @@ const currentPageData = products.slice(startIndex, endIndex);
   /* ================= SEARCH ================= */
   const handleSearch = async () => {
     const res = await fetch(
-  `http://40.80.79.26:5001/api/product-master?name=${filterName}&code=${filterCode}`
+  `https://mobile.coastal.bank.in:5001/api/product-master?name=${filterName}&code=${filterCode}`
 );
     const data = await res.json();
     setProducts(data);
@@ -57,7 +58,7 @@ setCurrentPage(1);
     setFilterName("");
     setFilterCode("");
 
-    const res = await fetch("http://40.80.79.26:5001/api/product-master");
+    const res = await fetch("https://mobile.coastal.bank.in:5001/api/product-master");
     const data = await res.json();
     setProducts(data);
 
@@ -72,8 +73,8 @@ setCurrentPage(1);
   const method = isEditMode ? "PUT" : "POST";
 
   const url = isEditMode
-    ? `http://40.80.79.26:5001/api/product-master/${formData.productCode}`
-    : "http://40.80.79.26:5001/api/product-master";
+  ? `https://mobile.coastal.bank.in:5001/api/product-master/${originalProductCode}`
+    : "https://mobile.coastal.bank.in:5001/api/product-master";
 
   await fetch(url, {
     method,
@@ -114,7 +115,7 @@ setCurrentPage(1);
   if (!confirmed) return;
 
   for (let code of selectedIds) {
-    await fetch(`http://40.80.79.26:5001/api/product-master/${code}`, {
+    await fetch(`https://mobile.coastal.bank.in:5001/api/product-master/${code}`, {
       method: "DELETE"
     });
   }
@@ -428,7 +429,10 @@ currentPageData.every(p => selectedIds.includes(p.ProductCode))
     <td
       className="border px-3 py-2 cursor-pointer"
       onClick={() => {
-  setFormData({
+
+setOriginalProductCode(p.ProductCode);   // ADD THIS
+
+setFormData({
   productCategory: p.ProductCategory || "",
   productType: p.ProductType || "",
   productCode: p.ProductCode || "",
@@ -440,8 +444,10 @@ currentPageData.every(p => selectedIds.includes(p.ProductCode))
   validFrom: p.ValidFrom ? p.ValidFrom.split("T")[0] : "",
   validTo: p.ValidTo ? p.ValidTo.split("T")[0] : ""
 });
+
 setIsEditMode(true);
-  setShowForm(true);
+setShowForm(true);
+
 }}
     >
       {p.ProductCategory}

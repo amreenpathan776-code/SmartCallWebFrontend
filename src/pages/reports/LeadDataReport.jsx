@@ -1,11 +1,34 @@
 import { useEffect, useState } from "react";
 
+// ================= LOGGER =================
+const getUserId = () => localStorage.getItem("userId") || "Unknown";
+
+const logInfo = (msg, data) =>
+  console.log(`📡 [User:${getUserId()}] ${msg}`, data || "");
+
+const logSuccess = (msg, data) =>
+  console.log(`✅ [User:${getUserId()}] ${msg}`, data || "");
+
+const logError = (msg, data) =>
+  console.error(`❌ [User:${getUserId()}] ${msg}`, data || "");
+
+const logWarn = (msg, data) =>
+  console.warn(`⚠️ [User:${getUserId()}] ${msg}`, data || "");
+
 const LeadDataReport = () => {
+
+useEffect(() => {
+  logInfo("LEAD DATA REPORT PAGE LOADED", {
+    role: localStorage.getItem("role"),
+    userId: localStorage.getItem("userId")
+  });
+}, []);
 
   const ALL_COLUMNS = [
   "serialNumber",
   "BranchName",
-  "UserName",
+  "LeadGeneratedBy",
+  "LeadAssignedTo",
   "MemberName",
   "MemberAddress",
   "MemberMobileNumber",
@@ -35,103 +58,187 @@ const LeadDataReport = () => {
 const [selectAllPage, setSelectAllPage] = useState(false);
 const [selectAllAllPages, setSelectAllAllPages] = useState(false);
 
+const role = localStorage.getItem("role");
+const userBranch = localStorage.getItem("branchName");
+const userCluster = localStorage.getItem("clusterName");
+
+const isBranchManager = role === "Branch Manager";
+
+const isRegionalManager = role?.startsWith("Regional Manager");
+
+let rmCluster = "";
+
+if (isRegionalManager) {
+  const match = role.match(/\((.*?)\)/);
+  rmCluster = match ? match[1] : "";
+}
+
+useEffect(() => {
+logInfo("RM Effect Triggered", { isRegionalManager, rmCluster });
+  if (isRegionalManager && rmCluster) {
+logInfo("Regional Manager flow triggered", rmCluster);
+    setCluster(rmCluster);
+
+    fetch(`https://mobile.coastal.bank.in:5001/api/branches/${rmCluster}`)
+      .then(res => res.json())
+      .then(data => {
+  logSuccess("RM Branches fetched", data);
+  setBranches(data || []);
+})
+      .catch((err) => {
+  logError("RM Branch fetch error", err);
+  setBranches([]);
+});
+
+  }
+
+}, [isRegionalManager, rmCluster]);
+
+useEffect(() => {
+
+  logInfo("Branch Manager Effect Triggered", {
+    userCluster,
+    userBranch
+  });
+
+  if (isBranchManager) {
+
+    logInfo("Branch Manager auto selection applied");
+
+    setCluster(userCluster);
+
+    fetch(`https://mobile.coastal.bank.in:5001/api/branches/${userCluster}`)
+      .then(res => res.json())
+      .then(data => {
+        logSuccess("BM Branches loaded", data);
+        setBranches(data);
+        setBranch(userBranch);
+      })
+      .catch(err => logError("BM Branch load error", err));
+
+  }
+
+}, [isBranchManager, userCluster, userBranch]);
+
 const [showExportModal, setShowExportModal] = useState(false);
 const [exportFileName, setExportFileName] = useState("Lead_Data_Report");
 
   const indexOfLastRecord = currentPage * recordsPerPage;
-  const indexOfFirstRecord = indexOfLastRecord - recordsPerPage;
-  const currentRows = rows.slice(indexOfFirstRecord, indexOfLastRecord);
-  const totalPages = Math.ceil(rows.length / recordsPerPage);
+const indexOfFirstRecord = indexOfLastRecord - recordsPerPage;
 
+const currentRows = rows.slice(indexOfFirstRecord, indexOfLastRecord);
+const totalPages = Math.ceil(rows.length / recordsPerPage);
+
+const firstRecord = rows.length === 0 ? 0 : indexOfFirstRecord + 1;
+const lastRecord = Math.min(indexOfLastRecord, rows.length);
   const [selectedColumns, setSelectedColumns] = useState(ALL_COLUMNS);
 
 
 useEffect(() => {
-  fetch("http://40.80.79.26:5001/api/clusters")
+  logInfo("Fetching clusters API");
+  fetch("https://mobile.coastal.bank.in:5001/api/clusters")
     .then(res => res.json())
-    .then(setClusters);
+    .then(data => {
+  logSuccess("Clusters fetched", data);
+  setClusters(data);
+});
 }, []);
 
 
 useEffect(() => {
+  logInfo("Cluster changed", cluster);
+  logWarn("Cluster cleared → resetting branches");
   if (!cluster) {
     setBranches([]);
     setBranch("");
     return;
   }
 
-  fetch(`http://40.80.79.26:5001/api/branches/${cluster}`)
+logInfo("Fetching branches for cluster", cluster);
+  fetch(`https://mobile.coastal.bank.in:5001/api/branches/${cluster}`)
     .then(res => res.json())
     .then(data => {
+      logSuccess("Branches loaded", data);
       setBranches(data);
-      setBranch("");
-    });
-}, [cluster]);
+
+      // ✅ Keep branch for Branch Manager
+      if (isBranchManager) {
+        setBranch(userBranch);
+      } else {
+        setBranch("");
+      }
+    })
+    .catch(err => logError("Branch load error", err));
+}, [cluster, isBranchManager, userBranch]);
 
 
 
 useEffect(() => {
 
   const loadUsers = async () => {
+    logInfo("Loading users", { cluster, branch });
 
     let selectedCluster = cluster;
+    let selectedBranch = branch;
 
-    // 🔥 Treat Corporate Office as ALL
+    // 🔹 Corporate Office special case
     if (cluster === "Corporate Office") {
       selectedCluster = "";
     }
 
-    // 1️⃣ Branch selected (most specific)
-    if (branch) {
-      const res = await fetch("http://40.80.79.26:5001/api/assignUsers", {
+    // 🔹 FORCE branch for Branch Manager
+    if (isBranchManager) {
+      selectedCluster = userCluster;
+      selectedBranch = userBranch;
+    }
+
+    try {
+logInfo("Calling Users API");
+      const res = await fetch("https://mobile.coastal.bank.in:5001/api/assignUsers/v2", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": localStorage.getItem("userId")
+        },
         body: JSON.stringify({
-          cluster: selectedCluster,
-          branchName: branch
+          cluster: selectedCluster || "",
+          branchName: selectedBranch || ""
         })
       });
 
+logInfo("Users API response received", res.status);
+      if (!res.ok) throw new Error("Unauthorized");
+
+      logInfo("Lead Data API response received", res.status);
       const data = await res.json();
-      setUsers(data);
+      logSuccess("Users loaded", data);
+
+      setUsers(Array.isArray(data) ? data : []);
       setUser("");
-      return;
+
+    } catch (err) {
+      logError("Users load error", err);
+      setUsers([]);
+      setUser("");
+
     }
 
-    // 2️⃣ Cluster selected
-    if (selectedCluster) {
-      const res = await fetch("http://40.80.79.26:5001/api/assignUsers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cluster: selectedCluster
-        })
-      });
-
-      const data = await res.json();
-      setUsers(data);
-      setUser("");
-      return;
-    }
-
-    // 3️⃣ Nothing selected → ALL users
-    const res = await fetch("http://40.80.79.26:5001/api/assignUsers", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({})
-    });
-
-    const data = await res.json();
-    setUsers(data);
-    setUser("");
   };
 
   loadUsers();
 
-}, [cluster, branch]);
+}, [cluster, branch, isBranchManager, userCluster, userBranch]);
 
 
 const handleSearch = async () => {
+
+  logInfo("LEAD DATA SEARCH STARTED", {
+  user,
+  cluster,
+  branch,
+  fromDate,
+  toDate
+});
 
   const hasAnyFilter =
     user ||
@@ -142,12 +249,20 @@ const handleSearch = async () => {
 
   if (!hasAnyFilter) {
     alert("Please select at least one filter before searching.");
+    logWarn("Search blocked - no filters");
     return; // 🚫 STOP SEARCH
   }
 
-  const res = await fetch("http://40.80.79.26:5001/api/lead-data-report", {
+  try {
+
+  logInfo("Calling Lead Data API");
+
+  const res = await fetch("https://mobile.coastal.bank.in:5001/api/lead-data-report", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-user-id": localStorage.getItem("userId")
+    },
     body: JSON.stringify({
       userId: user,
       cluster,
@@ -164,21 +279,68 @@ const handleSearch = async () => {
   setSelectedRows([]);
   setSelectAllPage(false);
   setSelectAllAllPages(false);
+
+  logSuccess("SEARCH SUCCESS", {
+    count: data?.length || 0
+  });
+
+  if (!data || data.length === 0) {
+  logWarn("No records found");
+}
+
+} catch (err) {
+
+  logError("SEARCH FAILED", err);
+
+}
 };
 
 
 const handleReset = () => {
+
+  logWarn("RESET TRIGGERED");
+
+  if (isBranchManager) {
+  setCluster(userCluster);
+
+  logInfo("Fetching branches for Branch Manager reset", userCluster);
+  fetch(`https://mobile.coastal.bank.in:5001/api/branches/${userCluster}`)
+    .then(res => res.json())
+    .then(data => {
+  logSuccess("BM Reset branches loaded", data);
+      setBranches(data);
+      setBranch(userBranch);
+    });
+
+}
+else if (isRegionalManager) {
+
+  setCluster(rmCluster);
+
+  logInfo("Fetching branches for RM reset", rmCluster);
+  fetch(`https://mobile.coastal.bank.in:5001/api/branches/${rmCluster}`)
+    .then(res => res.json())
+    .then(data => {
+  logSuccess("RM Reset branches loaded", data);
+      setBranches(data);
+      setBranch("");
+    });
+
+}
+else {
   setCluster("");
   setBranch("");
+  setBranches([]);
+}
   setUser("");
   setFromDate("");
   setToDate("");
   setRows([]);
-  setBranches([]);
   setCurrentPage(1);
   setSelectedRows([]);
-setSelectAllPage(false);
-setSelectAllAllPages(false);
+  setSelectAllPage(false);
+  setSelectAllAllPages(false);
+  logSuccess("RESET COMPLETED");
 };
 
 useEffect(() => {
@@ -196,39 +358,107 @@ useEffect(() => {
 
 const handleExportPDF = async () => {
 
-  if (selectedRows.length === 0) {
-    alert("No records selected");
-    return;
-  }
+  logInfo("EXPORT PDF STARTED", {
+  selectedRows,
+  selectedColumns,
+  exportFileName
+});
 
   if (selectedColumns.length === 0) {
     alert("Select at least one column");
     return;
   }
 
-  const response = await fetch(
-    "http://40.80.79.26:5001/api/lead-data-report/export-pdf",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        selectedIndexes: selectedRows,
-        columns: selectedColumns,
-        fileName: exportFileName,
-        fullData: rows
-      })
-    }
-  );
+  try {
 
-  const blob = await response.blob();
-  const url = window.URL.createObjectURL(blob);
+    const indexesToExport =
+      selectedRows.length === 0
+        ? rows.map((_, i) => i)   // export ALL
+        : selectedRows;           // export selected
 
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `${exportFileName}.pdf`;
-  link.click();
+        logInfo("Calling Export PDF API");
+    const response = await fetch(
+      "https://mobile.coastal.bank.in:5001/api/lead-data-report/export-pdf",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          selectedIndexes: indexesToExport,
+          columns: selectedColumns,
+          fileName: exportFileName,
+          fullData: rows
+        })
+      }
+    );
 
-  setShowExportModal(false);
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${exportFileName}.pdf`;
+    link.click();
+    logSuccess("PDF EXPORTED SUCCESSFULLY");
+
+    setShowExportModal(false);
+
+  } catch (err) {
+    logError("PDF EXPORT FAILED", err);
+    alert("PDF export failed");
+  }
+};
+
+
+const handleExportExcel = async () => {
+
+  logInfo("EXPORT EXCEL STARTED", {
+  selectedRows,
+  selectedColumns,
+  exportFileName
+});
+
+  if (selectedColumns.length === 0) {
+    alert("Select at least one column");
+    return;
+  }
+
+  try {
+
+    const indexesToExport =
+      selectedRows.length === 0
+        ? rows.map((_, i) => i)
+        : selectedRows;
+
+        logInfo("Calling Export Excel API");
+    const response = await fetch(
+      "https://mobile.coastal.bank.in:5001/api/lead-data-report/export-excel",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          selectedIndexes: indexesToExport,
+          columns: selectedColumns,
+          fileName: exportFileName,
+          fullData: rows
+        })
+      }
+    );
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${exportFileName}.xlsx`;
+    link.click();
+
+    logSuccess("EXCEL EXPORTED SUCCESSFULLY");
+    setShowExportModal(false);
+
+  } catch (err) {
+    logError("EXCEL EXPORT FAILED", err);
+    alert("Excel export failed");
+  }
 };
 
   return (
@@ -243,10 +473,13 @@ const handleExportPDF = async () => {
             <select
   className="w-full mt-1 px-3 py-2 bg-slate-100 border rounded"
   value={user}
-  onChange={e => setUser(e.target.value)}
+  onChange={e => {
+  logInfo("Filter changed", { field: "user", value: e.target.value });
+  setUser(e.target.value);
+}}
 >
   <option value="">Select</option>
-  {users.map(u => (
+  {Array.isArray(users) && users.map(u => (
     <option key={u.userId} value={u.userId}>
       {u.name}
     </option>
@@ -259,7 +492,10 @@ const handleExportPDF = async () => {
             <input
   type="date"
   value={fromDate}
-  onChange={e => setFromDate(e.target.value)}
+  onChange={e => {
+  logInfo("Filter changed", { field: "fromDate", value: e.target.value });
+  setFromDate(e.target.value);
+}}
   className="w-full mt-1 px-3 py-2 bg-slate-100 border rounded"
 />
 
@@ -270,7 +506,10 @@ const handleExportPDF = async () => {
             <input
   type="date"
   value={toDate}
-  onChange={e => setToDate(e.target.value)}
+  onChange={e => {
+  logInfo("Filter changed", { field: "toDate", value: e.target.value });
+  setToDate(e.target.value);
+}}
   className="w-full mt-1 px-3 py-2 bg-slate-100 border rounded"
 />
           </div>
@@ -278,9 +517,18 @@ const handleExportPDF = async () => {
           <div>
             <label className="text-sm text-slate-600">Cluster</label>
             <select
-  className="w-full mt-1 px-3 py-2 bg-slate-100 border rounded"
   value={cluster}
-  onChange={e => setCluster(e.target.value)}
+  onChange={e => {
+  logInfo("Filter changed", { field: "cluster", value: e.target.value });
+  setCluster(e.target.value);
+}}
+  disabled={isBranchManager || isRegionalManager}
+  className={`w-full mt-1 px-3 py-2 border rounded
+  ${
+  isBranchManager || isRegionalManager
+    ? "bg-slate-300 text-black font-semibold border-slate-400 cursor-not-allowed"
+    : "bg-slate-100"
+}`}
 >
   <option value="">Select</option>
   <option value="Corporate Office">Corporate Office</option>
@@ -295,9 +543,18 @@ const handleExportPDF = async () => {
           <div>
             <label className="text-sm text-slate-600">Branch</label>
             <select
-  className="w-full mt-1 px-3 py-2 bg-slate-100 border rounded"
   value={branch}
-  onChange={e => setBranch(e.target.value)}
+  onChange={e => {
+  logInfo("Filter changed", { field: "branch", value: e.target.value });
+  setBranch(e.target.value);
+}}
+  disabled={isBranchManager}
+  className={`w-full mt-1 px-3 py-2 border rounded
+  ${
+    isBranchManager
+      ? "bg-slate-300 text-black font-semibold border-slate-400 cursor-not-allowed"
+      : "bg-slate-100"
+  }`}
 >
   <option value="">Select</option>
   {branches.map(b => (
@@ -326,14 +583,8 @@ const handleExportPDF = async () => {
 </button>
 
 <button
-  disabled={selectedRows.length === 0}
-  onClick={() => {
-    if (selectedRows.length === 0) {
-      alert("Please select at least one record");
-      return;
-    }
-    setShowExportModal(true);
-  }}
+  disabled={rows.length === 0}
+  onClick={() => setShowExportModal(true)}
   className="px-6 py-2 bg-blue-600 text-white rounded disabled:opacity-50"
 >
   Export Data
@@ -366,6 +617,10 @@ const handleExportPDF = async () => {
 
       {/* ================= TABLE ================= */}
       <div className="bg-white rounded-xl border mt-6 flex flex-col flex-1 overflow-hidden">
+
+        <div className="text-center py-3 font-semibold border-b">
+  No. Of Records: {rows.length}
+</div>
 
         {/* ONLY TABLE SCROLLS */}
         <div className="flex-1 overflow-x-auto overflow-y-auto">
@@ -400,7 +655,8 @@ const handleExportPDF = async () => {
 
     <th className="p-3 border">S. No.</th>
     <th className="p-3 border">Branch Name</th>
-    <th className="p-3 border">User Name</th>
+    <th className="p-3 border">Lead Generated By</th>
+    <th className="p-3 border">Lead Assigned To</th>
     <th className="p-3 border">Member Name</th>
     <th className="p-3 border">Member Address</th>
     <th className="p-3 border">Member Mobile Number</th>
@@ -451,7 +707,8 @@ const handleExportPDF = async () => {
           </td>
 
           <td className="p-3 border">{r.BranchName}</td>
-          <td className="p-3 border">{r.UserName}</td>
+          <td className="p-3 border">{r.LeadGeneratedBy}</td>
+          <td className="p-3 border">{r.LeadAssignedTo}</td>
           <td className="p-3 border">{r.MemberName}</td>
           <td className="p-3 border">{r.MemberAddress}</td>
           <td className="p-3 border">{r.MemberMobileNumber}</td>
@@ -460,7 +717,21 @@ const handleExportPDF = async () => {
           <td className="p-3 border">{r.InterestedProduct}</td>
           <td className="p-3 border">{r.DateOfEntry}</td>
           <td className="p-3 border">{r.DateOfVisit}</td>
-          <td className="p-3 border">{r.ActivityStatus}</td>
+          <td className="p-3 border">
+  <span
+className={`font-semibold ${
+  r.ActivityStatus === "OPEN"
+    ? "text-green-600"
+    : r.ActivityStatus === "WORKING"
+    ? "text-blue-600"
+    : r.ActivityStatus === "NOT INTERESTED"
+    ? "text-gray-600"
+    : "text-red-600"
+}`}
+>
+  {r.ActivityStatus}
+</span>
+</td>
 
         </tr>
       );
@@ -472,54 +743,55 @@ const handleExportPDF = async () => {
 
  {/* PAGINATION */}
 {rows.length > 0 && (
-  <div className="flex justify-between items-center px-6 py-3 border-t bg-slate-50">
+  <div className="flex items-center justify-between px-6 py-3 border-t bg-slate-50 text-sm text-slate-600">
 
-    <span className="text-sm text-slate-600">
-      Showing {indexOfFirstRecord + 1} –
-      {Math.min(indexOfLastRecord, rows.length)} of {rows.length}
+  {/* Showing Records */}
+  <div>
+    Showing {firstRecord}-{lastRecord} of {rows.length}
+  </div>
+
+  {/* Pagination Controls */}
+  <div className="flex items-center gap-2">
+
+    <button
+      disabled={currentPage === 1}
+      onClick={() => setCurrentPage(1)}
+      className="px-2 py-1 border rounded disabled:opacity-50"
+    >
+      ⏮
+    </button>
+
+    <button
+      disabled={currentPage === 1}
+      onClick={() => setCurrentPage(p => p - 1)}
+      className="px-2 py-1 border rounded disabled:opacity-50"
+    >
+      ◀
+    </button>
+
+    <span>
+      Page {currentPage} of {totalPages}
     </span>
 
-    <div className="flex gap-2">
+    <button
+      disabled={currentPage === totalPages}
+      onClick={() => setCurrentPage(p => p + 1)}
+      className="px-2 py-1 border rounded disabled:opacity-50"
+    >
+      ▶
+    </button>
 
-      <button
-        disabled={currentPage === 1}
-        onClick={() => setCurrentPage(1)}
-        className="px-3 py-1 border rounded disabled:opacity-40"
-      >
-        ⏮
-      </button>
-
-      <button
-        disabled={currentPage === 1}
-        onClick={() => setCurrentPage(p => p - 1)}
-        className="px-3 py-1 border rounded disabled:opacity-40"
-      >
-        ◀
-      </button>
-
-      <span className="px-3 py-1 text-sm">
-        Page {currentPage} of {totalPages}
-      </span>
-
-      <button
-        disabled={currentPage === totalPages}
-        onClick={() => setCurrentPage(p => p + 1)}
-        className="px-3 py-1 border rounded disabled:opacity-40"
-      >
-        ▶
-      </button>
-
-      <button
-        disabled={currentPage === totalPages}
-        onClick={() => setCurrentPage(totalPages)}
-        className="px-3 py-1 border rounded disabled:opacity-40"
-      >
-        ⏭
-      </button>
-
-    </div>
+    <button
+      disabled={currentPage === totalPages}
+      onClick={() => setCurrentPage(totalPages)}
+      className="px-2 py-1 border rounded disabled:opacity-50"
+    >
+      ⏭
+    </button>
 
   </div>
+
+</div>
 )}
 
 {showExportModal && (
@@ -564,12 +836,23 @@ const handleExportPDF = async () => {
           Cancel
         </button>
 
-        <button
-          onClick={handleExportPDF}
-          className="px-4 py-2 bg-blue-600 text-white rounded"
-        >
-          Download PDF
-        </button>
+        <div className="flex gap-3">
+
+<button
+  onClick={handleExportExcel}
+  className="px-4 py-2 bg-green-600 text-white rounded"
+>
+  Export Excel
+</button>
+
+<button
+  onClick={handleExportPDF}
+  className="px-4 py-2 bg-blue-600 text-white rounded"
+>
+  Export PDF
+</button>
+
+</div>
       </div>
 
     </div>
